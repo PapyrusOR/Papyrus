@@ -5,7 +5,8 @@
 > **Dart SDK**: 3.11.x (当前 3.11.5)  
 > **UI 框架**: fluent_ui v4.15.x  
 > **PRD**: `PRD.md` v1.2.2  
-> **结构文档**: `STRUCTURE.md` v1.0.0  
+> **结构文档**: `STRUCTURE.md` v1.0.1  
+> **更新时间**: 2026-05-06  
 
 ---
 
@@ -42,7 +43,7 @@ dependencies:
 ```yaml
   provider: ^6.1.4          # 状态管理（ChangeNotifier 包装）
   path_provider: ^2.1.5     # 跨平台应用目录路径获取
-  drift: ^2.33.0            # SQLite ORM（全平台：Android/iOS/Desktop/WASM Web）
+  drift: ^2.32.1            # SQLite ORM（全平台：Android/iOS/Desktop/WASM Web）
   drift_flutter: ^0.3.0     # Flutter 跨平台数据库连接自动适配
   http: ^1.3.0              # AI API HTTP 请求（含 SSE 流式解析）
   file_picker: ^10.1.2      # 文件选择器（批量导入、附件上传）
@@ -53,12 +54,31 @@ dependencies:
 ```
 
 dev_dependencies:
-  drift_dev: ^2.33.0        # Drift 代码生成器
-  build_runner: ^2.15.0     # 代码生成构建工具
+  drift_dev: ^2.32.1        # Drift 代码生成器
+  build_runner: ^2.13.1     # 代码生成构建工具
+
+**SQLite 原生库策略**: iOS/macOS 上 `sqlite3` 包默认从 GitHub 下载预编译 dylib。若网络受限，可在 `pubspec.yaml` 中配置使用系统自带 SQLite：
+```yaml
+hooks:
+  user_defines:
+    sqlite3:
+      source: system
+```
+清理缓存后重新构建即可。系统库方案已验证在 iPhone/iPad 真机上可正常工作。
 
 **添加后必须执行**: `flutter pub get`
 
-### 2.3 本地参考资源
+**数据库变更后必须执行**: `dart run build_runner build`（生成 Drift 的 `app_database.g.dart`）
+
+### 2.3 平台构建注意事项
+
+| 平台 | 注意事项 |
+|------|---------|
+| **iOS 真机** | 无线调试可能因 Dart VM Service 发现超时失败（75s 限制）。建议首次使用 USB 线连接。构建前必须执行 `flutter clean`，否则 sqlite3 native assets 缓存可能导致白屏。 |
+| **iOS 签名** | 免费开发者证书每 7 天需重新信任（设置 > 通用 > VPN与设备管理）。 |
+| **macOS** | Release 构建约 47MB。首次构建会下载 `libsqlite3.dylib`。 |
+
+### 2.4 本地参考资源
 
 项目根目录下 `参考fluent_ui文档/fluent_ui-4.15.0/` 为 fluent_ui 源码克隆，开发中遇到 UI 组件使用问题时可直接查阅源码：
 
@@ -472,6 +492,8 @@ flutter build windows
 | **附件路径冲突** | 同名附件覆盖。 | 使用 `uuid` 重命名存储，原文件名仅作为显示。 |
 | **日志敏感信息泄露** | API Key 写入数据库。 | 所有日志输出经过 `sanitizers.dart` 的 `maskSensitiveFields()` 处理后再入库存储。 |
 | **MCP 未隔离** | HttpServer 运行在主 Isolate 阻塞 UI。 | 必须通过 `Isolate.spawn()` 启动 MCP 服务器。 |
+| **iOS 构建白屏** | sqlite3 native asset 缓存损坏或下载失败。 | 执行 `flutter clean` 后重试；或配置 `source: system` 使用系统 SQLite。 |
+| **iOS 无线调试超时** | Dart VM Service 75 秒内未被发现。 | 换 USB 连接；或在设置中允许应用的 Local Network 权限。 |
 
 ---
 

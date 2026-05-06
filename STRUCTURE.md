@@ -1,11 +1,12 @@
 # Papyrus Flutter 全平台项目结构文档
 
-> **版本**: v1.0.0  
+> **版本**: v1.0.1  
 > **定位**: 基于 PRD v1.2.2 的完整 Flutter/Dart 物理目录映射  
 > **目标平台**: Android / iOS / Windows / macOS / Linux / Web  
-> **Flutter SDK**: 3.41.x  
-> **Dart SDK**: 3.11.x  
-> **UI 框架**: fluent_ui (v4.15.x) + 平台自适应降级  
+> **Flutter SDK**: 3.41.9  
+> **Dart SDK**: 3.11.5  
+> **UI 框架**: fluent_ui (v4.15.1) + 平台自适应降级  
+> **状态**: Drift SQLite 迁移完成，28 个测试通过，iOS/macOS 真机验证通过  
 
 ---
 
@@ -374,35 +375,34 @@ dependencies:
     sdk: flutter
 
   # UI 框架
-  fluent_ui: ^4.15.0
+  fluent_ui: ^4.15.1
 
   # 状态管理
-  provider: ^6.1.0
+  provider: ^6.1.4
 
   # 本地存储与路径
-  path_provider: ^2.1.0
-  drift: ^2.33.0               # SQLite ORM
+  path_provider: ^2.1.5
+  drift: ^2.32.1               # SQLite ORM
   drift_flutter: ^0.3.0        # Flutter 跨平台数据库连接
 
   # 网络与 AI
-  http: ^1.2.0                 # AI API 请求
+  http: ^1.3.0                 # AI API 请求
 
   # 文件与附件
-  file_picker: ^8.0.0          # 文件选择 + 拖拽上传
-  mime: ^1.0.0                 # MIME 类型识别
-  path: ^1.9.0                 # 路径拼接
+  file_picker: ^10.1.2         # 文件选择
+  mime: ^2.0.0                 # MIME 类型识别
+  path: ^1.9.1                 # 路径拼接
 
   # 工具
-  intl: ^0.20.0                # 国际化、日期格式化
-  uuid: ^4.0.0                 # 附件/会话 UUID
-  crypto: ^3.0.0               # 敏感字段哈希（如需要）
+  intl: ^0.20.2                # 国际化、日期格式化
+  uuid: ^4.5.1                 # 附件/会话 UUID
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
-  build_runner: ^2.15.0
-  drift_dev: ^2.33.0
+  build_runner: ^2.13.1
+  drift_dev: ^2.32.1
 ```
 
 ---
@@ -433,7 +433,7 @@ flutter build web
 | 平台 | 特殊处理 |
 |------|---------|
 | **Web** | Drift 通过 WASM 在浏览器中运行 SQLite；MCP 服务器禁用；附件上传仅限浏览器 File API。 |
-| **Android/iOS** | `path_provider` 获取应用私有目录；Drift 自动绑定平台原生 SQLite；支持文件选择器；MCP 服务器绑定 `127.0.0.1`。 |
+| **Android/iOS** | `path_provider` 获取应用私有目录；Drift 自动绑定平台原生 SQLite；支持文件选择器；MCP 服务器绑定 `127.0.0.1`。iOS 构建前建议 `flutter clean` 清除 sqlite3 native assets 缓存。 |
 | **Windows/macOS/Linux** | 完整功能；Drift 通过 FFI 绑定本地 SQLite；`path_provider` 获取 Documents/Support 目录；支持全局快捷键注册（flutter 的 Shortcuts 已覆盖）。 |
 
 ---

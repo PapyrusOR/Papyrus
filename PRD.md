@@ -1,8 +1,9 @@
 # Papyrus 产品需求文档 (PRD)
 
-> **版本**: v1.2.2 抽象版  
+> **版本**: v1.2.3  
 > **定位**: UI 框架无关、平台无关的原始需求文档  
-> **适用范围**: 任何技术栈的重构实现（桌面端、移动端、Web、TUI 等）
+> **适用范围**: 任何技术栈的重构实现（桌面端、移动端、Web、TUI 等）  
+> **Flutter 实现状态**: Drift SQLite 迁移完成，28 个测试通过，iOS/macOS 真机验证通过
 
 ---
 
@@ -357,12 +358,18 @@ Agent 模式下，AI 可通过特定 JSON 格式调用以下工具：
 #### 4.6.1 数据存储
 - 所有数据统一存储在嵌入式 SQLite 数据库（通过 Drift ORM 管理）。
 - 数据库文件为单文件 `papyrus_db.sqlite`，位于应用私有数据目录。
-- 表结构：
+- 表结构（9 张表）：
   - `cards` — 卡片数据（id, q, a, next_review, interval, ef, repetitions, tags, created_at）
-  - `ai_providers` / `ai_provider_models` / `ai_settings` — AI 配置（规范化存储）
-  - `sessions` / `messages` / `attachments` / `active_session` — AI 会话（关系型存储）
+  - `ai_providers` — AI 提供商配置
+  - `ai_provider_models` — AI 模型列表
+  - `ai_settings` — AI 全局设置（单例）
+  - `sessions` — AI 会话
+  - `messages` — 会话消息
+  - `attachments` — 消息附件
+  - `active_session` — 当前活跃会话
   - `log_entries` — 日志条目（timestamp, level, category, message, metadata）
 - 所有写入通过 Drift 的事务机制保证原子性，无需手动文件原子替换。
+- 卡片查询（`getDueCards`、`search`）直接在 SQL 层过滤排序，避免全表加载。
 
 #### 4.6.2 自动备份
 - 策略：在每次数据写入（保存）时，若距离上次备份已超过 1 小时，则自动将当前 SQLite 数据库文件复制到备份目录。
