@@ -25,10 +25,10 @@
 │  CardService | SM2Engine | AIService | SessionService           │
 ├─────────────────────────────────────────────────────────────────┤
 │  Data Layer                                                     │
-│  Repository Pattern | File-based JSON Store | PathProvider      │
+│  Repository Pattern | Drift SQLite ORM | PathProvider           │
 ├─────────────────────────────────────────────────────────────────┤
 │  Platform / Infra Layer                                         │
-│  dart:io File IO | dart:io HttpServer (MCP) | path_provider    │
+│  Drift SQLite | dart:io HttpServer (MCP) | path_provider       │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -77,15 +77,17 @@ lib/
 │   │   └── app_settings_model.dart        # 应用全局设置模型
 │   ├── repositories/
 │   │   ├── card_repository.dart           # 卡片 CRUD、搜索、导入导出接口
-│   │   ├── card_repository_impl.dart      # 基于 File JSON 的实现
+│   │   ├── card_repository_impl.dart      # 基于 Drift 的实现
 │   │   ├── ai_config_repository.dart      # AI 配置持久化接口
-│   │   ├── ai_config_repository_impl.dart # 基于 File JSON 的实现
+│   │   ├── ai_config_repository_impl.dart # 基于 Drift 的实现
 │   │   ├── ai_session_repository.dart     # 会话持久化接口
-│   │   ├── ai_session_repository_impl.dart# 基于 File JSON 的实现
-│   │   ├── log_repository.dart            # 日志追加写接口
-│   │   └── log_repository_impl.dart       # 多文件分类追加写实现
+│   │   ├── ai_session_repository_impl.dart# 基于 Drift 的实现
+│   │   ├── log_repository.dart            # 日志查询接口
+│   │   └── log_repository_impl.dart       # 基于 Drift 的实现
 │   └── local/
-│       ├── file_storage.dart              # 通用文件读写封装（含原子替换）
+│       ├── app_database.dart              # Drift 数据库定义与表结构
+│       ├── app_database.g.dart            # Drift 代码生成文件
+│       ├── file_storage.dart              # 通用文件读写封装（仅用于附件/导出）
 │       └── backup_manager.dart            # 自动/手动备份与恢复逻辑
 │
 ├── domain/                                # 领域层（纯 Dart，无 Flutter 依赖）
@@ -220,35 +222,36 @@ PRD 第 3 章定义的所有 JSON 结构，在 Flutter 中映射为 **immutable/
 
 ### 3.2 持久化策略（Data Layer）
 
-PRD 4.6.1 要求 JSON 文件 + UTF-8 + 缩进格式化。
+PRD 4.6.1 要求统一 SQLite 数据库存储，通过 Drift ORM 管理。
 
 ```
 数据目录（path_provider 获取）
-├── cards.json          # 卡片数组
-├── ai_config.json      # AI 配置
-├── sessions.json       # AI 会话
+├── papyrus_db.sqlite   # 主 SQLite 数据库文件
+│   ├── cards           # 卡片表
+│   ├── ai_providers    # AI 提供商配置
+│   ├── ai_provider_models # AI 模型列表
+│   ├── ai_settings     # AI 全局设置（单例）
+│   ├── sessions        # AI 会话
+│   ├── messages        # 会话消息
+│   ├── attachments     # 消息附件
+│   ├── active_session  # 当前活跃会话
+│   └── log_entries     # 日志条目
 ├── backups/            # 自动/手动备份
 │   ├── auto_20250506_120000/
-│   │   ├── cards.json
-│   │   ├── ai_config.json
-│   │   └── sessions.json
+│   │   └── papyrus_db.sqlite
 │   └── manual_20250506_120000/
-├── attachments/        # 附件隔离存储
-│   └── {session_uuid}/
-│       └── {file_uuid}.ext
-└── logs/
-    ├── main.log
-    ├── error.log
-    ├── activity.jsonl
-    └── events.jsonl
+│       └── papyrus_db.sqlite
+└── attachments/        # 附件隔离存储（文件系统）
+    └── {session_uuid}/
+        └── {file_uuid}.ext
 ```
 
-**原子写入封装** (`data/local/file_storage.dart`):
+**Drift 数据库定义** (`data/local/app_database.dart`):
 ```dart
-Future<void> writeAtomic(String path, String content) async {
-  final temp = File('$path.tmp');
-  await temp.writeAsString(content, flush: true);
-  await temp.rename(path);
+@DriftDatabase(tables: [Cards, AiProviders, AiProviderModels, AiSettings,
+                       Sessions, Messages, Attachments, ActiveSession, LogEntries])
+class AppDatabase extends _$AppDatabase {
+  AppDatabase.defaults() : super(driftDatabase(name: 'papyrus_db'));
 }
 ```
 
@@ -378,7 +381,8 @@ dependencies:
 
   # 本地存储与路径
   path_provider: ^2.1.0
-  shared_preferences: ^2.3.0   # 仅用于轻量启动配置缓存
+  drift: ^2.33.0               # SQLite ORM
+  drift_flutter: ^0.3.0        # Flutter 跨平台数据库连接
 
   # 网络与 AI
   http: ^1.2.0                 # AI API 请求
@@ -393,15 +397,12 @@ dependencies:
   uuid: ^4.0.0                 # 附件/会话 UUID
   crypto: ^3.0.0               # 敏感字段哈希（如需要）
 
-  # JSON 序列化（可选，减少手写 fromJson 错误）
-  json_annotation: ^4.9.0
-
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
-  build_runner: ^2.4.0
-  json_serializable: ^6.8.0
+  build_runner: ^2.15.0
+  drift_dev: ^2.33.0
 ```
 
 ---
@@ -431,9 +432,9 @@ flutter build web
 
 | 平台 | 特殊处理 |
 |------|---------|
-| **Web** | `dart:io` 不可用；MCP 服务器禁用；文件存储改用 `localStorage`/`IndexedDB` 降级；附件上传仅限浏览器 File API。 |
-| **Android/iOS** | `path_provider` 获取应用私有目录；支持文件选择器；MCP 服务器绑定 `127.0.0.1`。 |
-| **Windows/macOS/Linux** | 完整功能；`path_provider` 获取 Documents/Support 目录；支持全局快捷键注册（flutter 的 Shortcuts 已覆盖）。 |
+| **Web** | Drift 通过 WASM 在浏览器中运行 SQLite；MCP 服务器禁用；附件上传仅限浏览器 File API。 |
+| **Android/iOS** | `path_provider` 获取应用私有目录；Drift 自动绑定平台原生 SQLite；支持文件选择器；MCP 服务器绑定 `127.0.0.1`。 |
+| **Windows/macOS/Linux** | 完整功能；Drift 通过 FFI 绑定本地 SQLite；`path_provider` 获取 Documents/Support 目录；支持全局快捷键注册（flutter 的 Shortcuts 已覆盖）。 |
 
 ---
 
@@ -445,7 +446,7 @@ flutter build web
 | Widget 测试 | StudyScreen 状态机、AIChat 消息列表、Settings 表单验证 | `WidgetTester` |
 | 集成测试 | 完整学习流程（添加→学习→评分→查看日志） | `integration_test` |
 
-**Mock 策略**: 日志系统的 `LogWriter` 接口在测试中注入 `MemoryLogWriter`。
+**Mock 策略**: 日志系统的 `LogWriter` 接口在测试中可注入 `MemoryLogWriter`；Repository 层可通过传入内存数据库（`AppDatabase(NativeDatabase.memory())`）进行隔离测试。
 
 ---
 
@@ -458,12 +459,12 @@ flutter build web
 | 4.3 AI 助手 | `ai/` 模块 + `presentation/providers/ai_chat_provider.dart` | `openai_compatible_provider.dart`, `tool_parser.dart` |
 | 4.4 会话管理 | `presentation/providers/session_provider.dart` | `ai_session_model.dart`, `session_sidebar.dart` |
 | 4.5 设置与配置 | `presentation/screens/settings_screen.dart` + `presentation/providers/ai_config_provider.dart` | `validators.dart`, `provider_editor.dart` |
-| 4.6 数据持久化与备份 | `data/local/file_storage.dart` + `domain/services/backup_service.dart` | `backup_manager.dart`, `backup_screen.dart` |
-| 4.7 日志与诊断 | `logging/` + `presentation/screens/log_viewer_screen.dart` | `logger.dart`, `log_repository_impl.dart` |
+| 4.6 数据持久化与备份 | `data/local/app_database.dart` + `domain/services/backup_service.dart` | `backup_manager.dart`, `backup_screen.dart` |
+| 4.7 日志与诊断 | `logging/` + `presentation/screens/log_viewer_screen.dart` | `logger.dart`, `log_writers.dart` |
 | 4.8 MCP 服务接口 | `mcp/` 模块 | `mcp_server.dart`, `mcp_isolate.dart` |
 | 5.1 键盘驱动 | `core/constants/keyboard_shortcuts.dart` + `presentation/screens/study_screen.dart` | `Shortcuts` / `Actions` Widget |
-| 6.1 性能 | 全模块异步设计 | `Isolate.run` (JSON 解析), `FutureBuilder` |
-| 6.2 可靠性 | 原子写入 + 降级处理 | `file_storage.dart`, `ai_chat_provider.dart` |
+| 6.1 性能 | 全模块异步设计 | Drift 索引查询, `FutureBuilder` |
+| 6.2 可靠性 | SQLite 事务 + 降级处理 | `app_database.dart`, `ai_chat_provider.dart` |
 | 6.3 安全性 | 掩码 + 路径校验 | `sanitizers.dart`, `path_resolver.dart` |
 
 ---

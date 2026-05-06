@@ -142,10 +142,10 @@ Papyrus 是一款以卡片（Flashcard）为知识载体的间隔重复（Spaced
 
 | 日志类型 | 用途 | 格式 |
 |---------|------|------|
-| 主日志 (main) | 常规运行日志，DEBUG 及以上级别 | 纯文本 |
-| 错误日志 (error) | 仅 ERROR 级别及以上 | 纯文本 |
-| 活动日志 (activity) | 用户行为追踪（如评分、添加卡片） | JSONL |
-| 事件日志 (events) | 结构化事件，如 AI 工具调用、MCP 请求 | JSONL |
+| 主日志 (main) | 常规运行日志，DEBUG 及以上级别 | SQLite `log_entries` 表 |
+| 错误日志 (error) | 仅 ERROR 级别及以上 | SQLite `log_entries` 表 |
+| 活动日志 (activity) | 用户行为追踪（如评分、添加卡片） | SQLite `log_entries` 表 |
+| 事件日志 (events) | 结构化事件，如 AI 工具调用、MCP 请求 | SQLite `log_entries` 表 |
 
 **脱敏要求**: 日志中若出现键名包含 `api_key`、`authorization`、`token`、`secret`、`password`、`key` 的字段，值必须做掩码处理（如前3字符 + `***` + 后2字符）；字符串长度超过阈值（如 800 字符）应截断并标注原始长度。
 
@@ -355,14 +355,18 @@ Agent 模式下，AI 可通过特定 JSON 格式调用以下工具：
 ### 4.6 数据持久化与备份
 
 #### 4.6.1 数据存储
-- 卡片数据以 JSON 数组格式存储。
-- AI 配置以独立 JSON 文件存储。
-- AI 会话数据以独立 JSON 文件存储。
-- 所有 JSON 文件应使用 UTF-8 编码，带缩进格式化。
+- 所有数据统一存储在嵌入式 SQLite 数据库（通过 Drift ORM 管理）。
+- 数据库文件为单文件 `papyrus_db.sqlite`，位于应用私有数据目录。
+- 表结构：
+  - `cards` — 卡片数据（id, q, a, next_review, interval, ef, repetitions, tags, created_at）
+  - `ai_providers` / `ai_provider_models` / `ai_settings` — AI 配置（规范化存储）
+  - `sessions` / `messages` / `attachments` / `active_session` — AI 会话（关系型存储）
+  - `log_entries` — 日志条目（timestamp, level, category, message, metadata）
+- 所有写入通过 Drift 的事务机制保证原子性，无需手动文件原子替换。
 
 #### 4.6.2 自动备份
-- 策略：在每次数据写入（保存）时，若距离上次备份已超过 1 小时，则自动将当前数据复制到备份位置。
-- 备份文件应独立存储，与主数据文件分离。
+- 策略：在每次数据写入（保存）时，若距离上次备份已超过 1 小时，则自动将当前 SQLite 数据库文件复制到备份目录。
+- 备份以目录形式存储（`auto_YYYYMMDD_HHMMSS/` 或 `manual_YYYYMMDD_HHMMSS/`），内含 `papyrus_db.sqlite`。
 
 #### 4.6.3 手动备份与恢复
 - 用户可一键创建即时备份。

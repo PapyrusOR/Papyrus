@@ -19,11 +19,16 @@ dependencies:
   intl: ^0.20.2
   uuid: ^4.5.1
   path: ^1.9.1
+  mime: ^2.0.0
+  drift: ^2.32.1
+  drift_flutter: ^0.3.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+  drift_dev: ^2.32.1
+  build_runner: ^2.13.1
 
 flutter:
   uses-material-design: true

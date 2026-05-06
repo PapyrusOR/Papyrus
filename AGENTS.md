@@ -37,22 +37,24 @@ dependencies:
   fluent_ui: ^4.15.1        # Windows Fluent Design UI 框架
 ```
 
-### 2.2 后续需添加的关键依赖
-
-在实现具体模块时，按需在 `pubspec.yaml` 中添加：
+### 2.2 已安装的关键依赖
 
 ```yaml
-  provider: ^6.1.0          # 状态管理（ChangeNotifier 包装）
-  path_provider: ^2.1.0     # 跨平台应用目录路径获取
-  shared_preferences: ^2.3.0 # 轻量 KV 缓存（仅启动配置）
-  http: ^1.2.0              # AI API HTTP 请求（含 SSE 流式解析）
-  file_picker: ^8.0.0       # 文件选择器（批量导入、附件上传）
-  mime: ^1.0.0              # MIME 类型识别
-  path: ^1.9.0              # 路径拼接工具
-  intl: ^0.20.0             # 国际化、日期格式化
-  uuid: ^4.0.0              # UUID 生成（附件、会话隔离目录）
-  json_annotation: ^4.9.0   # JSON 序列化注解
+  provider: ^6.1.4          # 状态管理（ChangeNotifier 包装）
+  path_provider: ^2.1.5     # 跨平台应用目录路径获取
+  drift: ^2.33.0            # SQLite ORM（全平台：Android/iOS/Desktop/WASM Web）
+  drift_flutter: ^0.3.0     # Flutter 跨平台数据库连接自动适配
+  http: ^1.3.0              # AI API HTTP 请求（含 SSE 流式解析）
+  file_picker: ^10.1.2      # 文件选择器（批量导入、附件上传）
+  mime: ^2.0.0              # MIME 类型识别
+  path: ^1.9.1              # 路径拼接工具
+  intl: ^0.20.2             # 国际化、日期格式化
+  uuid: ^4.5.1              # UUID 生成（附件、会话隔离目录）
 ```
+
+dev_dependencies:
+  drift_dev: ^2.33.0        # Drift 代码生成器
+  build_runner: ^2.15.0     # 代码生成构建工具
 
 **添加后必须执行**: `flutter pub get`
 
@@ -124,18 +126,19 @@ class StudyProvider extends ChangeNotifier {
 
 ### 3.3 数据持久化规范
 
-- 所有文件路径通过 `path_provider` 获取，禁止硬编码任何绝对路径。
-- JSON 文件写入必须使用**原子替换策略**（先写 `.tmp` 再 `rename`）。
-- 数据目录结构见 `STRUCTURE.md` 第 3.2 节。
-- Web 平台 `dart:io` 不可用，所有数据操作必须通过条件编译或 Repository 接口降级。
+- **所有业务数据通过 Drift ORM 存入 SQLite**，不再使用 JSON 文件存储。
+- 数据库文件为单文件 `papyrus_db.sqlite`，`driftDatabase(name: 'papyrus_db')` 自动适配所有平台。
+- Web 平台 Drift 通过 WASM 运行 SQLite，无需条件编译降级。
+- 附件文件仍通过 `path_provider` + `dart:io` File 存储（附件不存数据库）。
+- 备份通过复制 `.sqlite` 数据库文件实现。
 
 ```dart
-import 'dart:io';
+import 'package:drift/drift.dart';
+import 'package:drift_flutter/drift_flutter.dart';
 
-Future<void> writeAtomic(String path, String content) async {
-  final temp = File('$path.tmp');
-  await temp.writeAsString(content, flush: true);
-  await temp.rename(path);
+@DriftDatabase(tables: [Cards, Sessions, LogEntries, ...])
+class AppDatabase extends _$AppDatabase {
+  AppDatabase.defaults() : super(driftDatabase(name: 'papyrus_db'));
 }
 ```
 
@@ -230,11 +233,12 @@ class CardModel {
 
 - 所有关键操作（评分、添加/删除卡片、导入、AI 请求、工具调用、MCP 请求）必须记录日志。
 - 敏感字段（键名含 `api_key`, `token`, `secret`, `password`）必须掩码处理。
-- 使用 `logging/` 模块的 `Logger` 类，禁止直接 `print`。
+- 使用 `logging/` 模块的 `Logger` 类写入 Drift `log_entries` 表，禁止直接 `print`。
+- 日志导出时从数据库查询并格式化为纯文本，不再维护独立的 `.log`/`.jsonl` 文件。
 
 ```dart
 // ✅ 正确
-logger.info('User graded card', {'cardIndex': index, 'grade': grade});
+Logger.instance.info('User graded card', {'cardIndex': index, 'grade': grade});
 
 // ❌ 错误
 print('User graded card $index with $grade');
@@ -401,8 +405,8 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
 ### 6.4 平台兼容性策略
 
 - **桌面优先**: fluent_ui 的设计语言偏向桌面，Windows/macOS/Linux 获得最佳体验。
-- **移动端兼容**: `NavigationPane` 的 `displayMode: auto` 在窄屏自动折叠；字体/间距通过 `MediaQuery` 适配。
-- **Web 降级**: Web 平台禁用 MCP 服务器、禁用文件系统直接写入（改用内存缓存或 `localStorage`），附件上传使用 HTML File API。
+- **移动端兼容**: `NavigationPane` 的 `displayMode: auto` 在窄屏自动折叠；字体/间距通过 `MediaQuery` 适配。Drift 在移动端通过原生 SQLite 运行。
+- **Web 支持**: Drift 通过 WASM 在浏览器中运行 SQLite，数据持久化到 IndexedDB。Web 平台禁用 MCP 服务器，附件上传使用 HTML File API。
 
 ---
 
@@ -460,13 +464,13 @@ flutter build windows
 
 | 陷阱 | 说明 | 避免方法 |
 |------|------|---------|
-| **Web 平台导入 dart:io** | Web 不支持 `dart:io`，编译失败。 | 使用条件导入 `import 'dart:io' if (dart.library.html) '...'` 或 Repository 接口隔离。 |
-| **UI 线程阻塞** | AI 请求或大量 JSON 解析阻塞 UI。 | AI 请求用 `async/await` + `FutureBuilder`；大量 JSON 用 `Isolate.run()`。 |
-| **路径硬编码** | 不同平台数据目录不同。 | 统一使用 `path_provider` 的 `getApplicationDocumentsDirectory()`。 |
+| **Web 平台导入 dart:io** | Web 不支持 `dart:io`，编译失败。 | Drift 已自动处理 Web 平台（WASM），业务代码不直接依赖 `dart:io` 做数据存储。 |
+| **UI 线程阻塞** | AI 请求或大量数据查询阻塞 UI。 | AI 请求用 `async/await` + `FutureBuilder`；Drift 查询本身异步，大数据量用分页。 |
+| **路径硬编码** | 不同平台数据目录不同。 | 统一使用 `path_provider` 的 `getApplicationDocumentsDirectory()`；数据库路径由 Drift 自动管理。 |
 | **Provider 未 notify** | 修改状态后忘记 `notifyListeners()`。 | 状态修改封装为 Provider 的方法，方法末尾统一调用 `notifyListeners()`。 |
 | **忘记防抖** | 答案状态评分按钮未做防抖。 | `StudyProvider` 中进入答案状态时启动 `Timer`，0.5 秒内禁用评分按钮。 |
 | **附件路径冲突** | 同名附件覆盖。 | 使用 `uuid` 重命名存储，原文件名仅作为显示。 |
-| **日志敏感信息泄露** | API Key 写入日志。 | 所有日志输出经过 `sanitizers.dart` 的 `maskSensitiveFields()` 处理。 |
+| **日志敏感信息泄露** | API Key 写入数据库。 | 所有日志输出经过 `sanitizers.dart` 的 `maskSensitiveFields()` 处理后再入库存储。 |
 | **MCP 未隔离** | HttpServer 运行在主 Isolate 阻塞 UI。 | 必须通过 `Isolate.spawn()` 启动 MCP 服务器。 |
 
 ---
@@ -494,7 +498,7 @@ flutter build windows
 | 场景 | 决策 |
 |------|------|
 | 需要全局状态共享 | 创建 `ChangeNotifier` + 在 `main.dart` 用 `ChangeNotifierProvider` 包裹 |
-| 需要存储用户配置 | 先写 `Repository` 接口，再用 `File` JSON 实现 |
+| 需要存储用户数据 | 先写 `Repository` 接口，再用 `Drift` + `AppDatabase` 实现 |
 | 需要调用 AI API | 实现 `AIProvider` 接口，用 `http` 包发送请求 |
 | 需要文件上传 | 用 `file_picker`，附件存到 `{dataDir}/attachments/{session_uuid}/` |
 | 需要后台 HTTP 服务 | 用 `dart:io` 的 `HttpServer`，包装在 `Isolate` 中 |
