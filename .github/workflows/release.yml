@@ -56,7 +56,10 @@ jobs:
           REF_NAME: ${{ github.ref_name }}
           INPUT_TAG: ${{ github.event.inputs.tag }}
           INPUT_DRAFT: ${{ github.event.inputs.draft }}
+          AUTO_RELEASE_DRAFT: ${{ vars.AUTO_RELEASE_DRAFT }}
           RUN_NUMBER: ${{ github.run_number }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
 
@@ -82,6 +85,22 @@ jobs:
           elif [[ "$REF_TYPE" == "tag" && "$REF_NAME" == v* ]]; then
             tag_name="$REF_NAME"
             should_release=true
+          elif [[ "$EVENT_NAME" == "push" && "$REF_TYPE" == "branch" && "$REF_NAME" == "main" && "$AUTO_RELEASE_DRAFT" == "true" ]]; then
+            tag_name="v${pubspec_name}"
+            tag_ref="repos/${GH_REPO}/git/ref/tags/${tag_name}"
+            tag_lookup_output=""
+
+            if tag_lookup_output="$(gh api "$tag_ref" --jq '.ref' 2>&1)"; then
+              echo "Remote tag $tag_name already exists; skipping automatic draft release."
+            elif [[ "$tag_lookup_output" == *"404"* || "$tag_lookup_output" == *"Not Found"* ]]; then
+              echo "Remote tag $tag_name does not exist; enabling automatic draft release."
+              should_release=true
+              is_draft=true
+            else
+              echo "Unable to inspect remote tag $tag_name:" >&2
+              echo "$tag_lookup_output" >&2
+              exit 1
+            fi
           fi
 
           if [[ "$should_release" == "true" ]]; then
