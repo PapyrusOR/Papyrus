@@ -412,7 +412,7 @@ jobs:
         run: flutter pub get
 
       - name: Build macOS release
-        run: flutter build macos --release --no-codesign --build-name "$BUILD_NAME" --build-number "$BUILD_NUMBER"
+        run: flutter build macos --release --build-name "$BUILD_NAME" --build-number "$BUILD_NUMBER"
 
       - name: Package macOS release
         shell: bash
