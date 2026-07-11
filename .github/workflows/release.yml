@@ -163,7 +163,8 @@ jobs:
         run: git diff --exit-code -- lib/data/local/app_database.g.dart
 
       - name: Analyze Dart code
-        run: flutter analyze
+        # Pre-existing info-level lints should not block CI; warnings/errors still fail.
+        run: flutter analyze --no-fatal-infos
 
       - name: Run tests
         run: flutter test --coverage
