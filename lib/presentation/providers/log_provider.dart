@@ -1,5 +1,5 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
+import '../../core/platform/log_export.dart';
 import '../../data/local/app_database.dart';
 import '../../data/models/log_entry_model.dart';
 
@@ -52,13 +52,17 @@ class LogProvider extends ChangeNotifier {
     notifyListeners();
 
     final rows = await _db.select(_db.logEntries).get();
-    _entries = rows.map((r) => LogEntryModel(
-          timestamp: r.timestamp,
-          level: LogLevel.values.byName(r.level),
-          category: LogCategory.values.byName(r.category),
-          message: r.message,
-          metadata: null,
-        )).toList();
+    _entries = rows
+        .map(
+          (r) => LogEntryModel(
+            timestamp: r.timestamp,
+            level: LogLevel.values.byName(r.level),
+            category: LogCategory.values.byName(r.category),
+            message: r.message,
+            metadata: null,
+          ),
+        )
+        .toList();
 
     _isLoading = false;
     notifyListeners();
@@ -79,20 +83,26 @@ class LogProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> exportLogs(String path) async {
+  Future<String> exportLogs(String fileName) async {
     final rows = await _db.select(_db.logEntries).get();
-    final buffer = StringBuffer();
-    for (final row in rows) {
-      final entry = LogEntryModel(
+    final entries = rows.map((row) {
+      return LogEntryModel(
         timestamp: row.timestamp,
         level: LogLevel.values.byName(row.level),
         category: LogCategory.values.byName(row.category),
         message: row.message,
         metadata: null,
       );
+    });
+    return exportLogText(fileName, formatLogEntries(entries));
+  }
+
+  static String formatLogEntries(Iterable<LogEntryModel> entries) {
+    final buffer = StringBuffer();
+    for (final entry in entries) {
       buffer.writeln(entry.toPlainText());
     }
-    await File(path).writeAsString(buffer.toString());
+    return buffer.toString();
   }
 
   Future<void> clearLogs() async {

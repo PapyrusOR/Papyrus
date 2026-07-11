@@ -10,27 +10,27 @@ class CardRepositoryImpl implements CardRepository {
   CardRepositoryImpl(this._db);
 
   CardModel _toModel(Card c) => CardModel(
-        id: c.id,
-        q: c.q,
-        a: c.a,
-        nextReview: c.nextReview,
-        interval: c.interval,
-        ef: c.ef,
-        repetitions: c.repetitions,
-        tags: c.tags.isEmpty ? [] : c.tags.split(','),
-      );
+    id: c.id,
+    q: c.q,
+    a: c.a,
+    nextReview: c.nextReview,
+    interval: c.interval,
+    ef: c.ef,
+    repetitions: c.repetitions,
+    tags: c.tags.isEmpty ? [] : c.tags.split(','),
+  );
 
   CardsCompanion _toCompanion(CardModel card) => CardsCompanion(
-        id: Value(card.id),
-        q: Value(card.q),
-        a: Value(card.a),
-        nextReview: Value(card.nextReview),
-        interval: Value(card.interval),
-        ef: Value(card.ef),
-        repetitions: Value(card.repetitions),
-        tags: Value(card.tags.join(',')),
-        createdAt: Value(card.createdAt),
-      );
+    id: Value(card.id),
+    q: Value(card.q),
+    a: Value(card.a),
+    nextReview: Value(card.nextReview),
+    interval: Value(card.interval),
+    ef: Value(card.ef),
+    repetitions: Value(card.repetitions),
+    tags: Value(card.tags.join(',')),
+    createdAt: Value(card.createdAt),
+  );
 
   @override
   Future<List<CardModel>> loadAll() async {
@@ -77,8 +77,7 @@ class CardRepositoryImpl implements CardRepository {
   Future<List<CardModel>> search(String keyword) async {
     final lower = '%${keyword.toLowerCase()}%';
     final query = _db.select(_db.cards)
-      ..where((c) =>
-          c.q.lower().like(lower) | c.a.lower().like(lower));
+      ..where((c) => c.q.lower().like(lower) | c.a.lower().like(lower));
     final rows = await query.get();
     return rows.map(_toModel).toList();
   }
@@ -95,17 +94,21 @@ class CardRepositoryImpl implements CardRepository {
         final q = parts[0].trim();
         final a = parts[1].trim();
         if (q.isNotEmpty && a.isNotEmpty) {
-          cards.add(CardsCompanion(
-            id: Value(DateTime.now().millisecondsSinceEpoch.toString() + '_${cards.length}'),
-            q: Value(q),
-            a: Value(a),
-            nextReview: const Value(AppConstants.defaultNextReview),
-            interval: const Value(AppConstants.defaultInterval),
-            ef: const Value(AppConstants.defaultEasinessFactor),
-            repetitions: const Value(AppConstants.defaultRepetitions),
-            tags: const Value(''),
-            createdAt: Value(DateTime.now().millisecondsSinceEpoch ~/ 1000),
-          ));
+          cards.add(
+            CardsCompanion(
+              id: Value(
+                '${DateTime.now().millisecondsSinceEpoch}_${cards.length}',
+              ),
+              q: Value(q),
+              a: Value(a),
+              nextReview: const Value(AppConstants.defaultNextReview),
+              interval: const Value(AppConstants.defaultInterval),
+              ef: const Value(AppConstants.defaultEasinessFactor),
+              repetitions: const Value(AppConstants.defaultRepetitions),
+              tags: const Value(''),
+              createdAt: Value(DateTime.now().millisecondsSinceEpoch ~/ 1000),
+            ),
+          );
         }
       }
     }

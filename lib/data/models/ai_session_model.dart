@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 class AttachmentModel {
   final String id;
   final String name;
@@ -7,6 +9,7 @@ class AttachmentModel {
   final String mimeType;
   final int size;
   final int createdAt;
+  final Uint8List? bytes;
 
   AttachmentModel({
     required this.id,
@@ -17,6 +20,7 @@ class AttachmentModel {
     required this.mimeType,
     required this.size,
     required this.createdAt,
+    this.bytes,
   });
 
   factory AttachmentModel.fromJson(Map<String, dynamic> json) {
@@ -59,7 +63,8 @@ class MessageModel {
     return MessageModel(
       role: json['role'] as String? ?? 'user',
       content: json['content'] as String? ?? '',
-      attachments: (json['attachments'] as List<dynamic>?)
+      attachments:
+          (json['attachments'] as List<dynamic>?)
               ?.map((e) => AttachmentModel.fromJson(e as Map<String, dynamic>))
               .toList() ??
           [],
@@ -92,7 +97,8 @@ class SessionModel {
     return SessionModel(
       id: json['id'] as String? ?? '',
       title: json['title'] as String? ?? '新会话',
-      messages: (json['messages'] as List<dynamic>?)
+      messages:
+          (json['messages'] as List<dynamic>?)
               ?.map((e) => MessageModel.fromJson(e as Map<String, dynamic>))
               .toList() ??
           [],
@@ -116,15 +122,13 @@ class AISessionDataModel {
   String activeSessionId;
   final List<SessionModel> sessions;
 
-  AISessionDataModel({
-    required this.activeSessionId,
-    this.sessions = const [],
-  });
+  AISessionDataModel({required this.activeSessionId, this.sessions = const []});
 
   factory AISessionDataModel.fromJson(Map<String, dynamic> json) {
     return AISessionDataModel(
       activeSessionId: json['active_session_id'] as String? ?? '',
-      sessions: (json['sessions'] as List<dynamic>?)
+      sessions:
+          (json['sessions'] as List<dynamic>?)
               ?.map((e) => SessionModel.fromJson(e as Map<String, dynamic>))
               .toList() ??
           [],

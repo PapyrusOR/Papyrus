@@ -47,6 +47,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Test release metadata rules
+        shell: bash
+        run: bash scripts/test_release_metadata.sh
+
       - name: Validate release metadata
         id: metadata
         shell: bash
@@ -103,39 +107,13 @@ jobs:
             fi
           fi
 
-          if [[ "$should_release" == "true" ]]; then
-            if [[ ! "$tag_name" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-              echo "Release tag must match v<semver>: $tag_name"
-              exit 1
-            fi
-
-            tag_version="${tag_name#v}"
-            if [[ "$tag_version" != "$pubspec_name" ]]; then
-              echo "Release tag $tag_name does not match pubspec.yaml version $pubspec_version"
-              echo "The tag must match the version before the optional +build suffix."
-              exit 1
-            fi
-          else
-            tag_name="snapshot-${GITHUB_SHA:0:7}"
-          fi
-
-          build_name="${tag_version%%-*}"
-
-          # Any semver prerelease suffix (hyphen after the core version) is a prerelease.
-          is_prerelease=false
-          if [[ "$tag_name" == *-* ]]; then
-            is_prerelease=true
-          fi
-
-          {
-            echo "should_release=$should_release"
-            echo "tag_name=$tag_name"
-            echo "is_draft=$is_draft"
-            echo "is_prerelease=$is_prerelease"
-            echo "build_name=$build_name"
-            echo "build_number=$RUN_NUMBER"
-            echo "artifact_version=$tag_version"
-          } >> "$GITHUB_OUTPUT"
+          bash scripts/release_metadata.sh \
+            "$pubspec_version" \
+            "$tag_name" \
+            "$should_release" \
+            "$is_draft" \
+            "$RUN_NUMBER" \
+            "$GITHUB_SHA" >> "$GITHUB_OUTPUT"
 
   quality:
     name: Analyze and test
@@ -163,18 +141,13 @@ jobs:
         run: git diff --exit-code -- lib/data/local/app_database.g.dart
 
       - name: Analyze Dart code
-        # Pre-existing info-level lints should not block CI; warnings/errors still fail.
-        run: flutter analyze --no-fatal-infos
+        run: flutter analyze
 
       - name: Run tests
         run: flutter test --coverage
 
-  # Temporarily disabled: app entry still imports dart:io unconditionally
-  # (LogProvider, BackupService, etc.), so `flutter build web` fails.
-  # Re-enable after conditional imports / stubs land; set repo var ENABLE_WEB_BUILD=true.
   web:
     name: Build Web
-    if: ${{ vars.ENABLE_WEB_BUILD == 'true' }}
     runs-on: ubuntu-latest
     needs: [prepare, quality]
     env:

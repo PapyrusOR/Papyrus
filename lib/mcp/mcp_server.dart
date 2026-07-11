@@ -17,7 +17,7 @@ class MCPServer {
     if (_server != null) return;
 
     _server = await HttpServer.bind(host, port);
-    print('MCP Server running on http://$host:$port');
+    stderr.writeln('MCP Server running on http://$host:$port');
 
     await for (final request in _server!) {
       _handleRequest(request);
@@ -27,14 +27,20 @@ class MCPServer {
   Future<void> stop() async {
     await _server?.close();
     _server = null;
-    print('MCP Server stopped');
+    stderr.writeln('MCP Server stopped');
   }
 
   void _handleRequest(HttpRequest request) {
     // CORS 头
     request.response.headers.add('Access-Control-Allow-Origin', '*');
-    request.response.headers.add('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    request.response.headers.add('Access-Control-Allow-Headers', 'Content-Type');
+    request.response.headers.add(
+      'Access-Control-Allow-Methods',
+      'GET, POST, OPTIONS',
+    );
+    request.response.headers.add(
+      'Access-Control-Allow-Headers',
+      'Content-Type',
+    );
 
     if (request.method == 'OPTIONS') {
       request.response.statusCode = HttpStatus.noContent;
@@ -103,7 +109,9 @@ class MCPServer {
       }
 
       final executor = ToolExecutor(_cardRepository);
-      final result = await executor.execute(ToolCall(tool: tool, params: params));
+      final result = await executor.execute(
+        ToolCall(tool: tool, params: params),
+      );
 
       request.response
         ..statusCode = HttpStatus.ok

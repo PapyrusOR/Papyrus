@@ -1,7 +1,9 @@
 import 'dart:convert';
-import 'dart:io';
+import 'dart:typed_data';
 import 'package:mime/mime.dart' as mime;
+import 'package:path/path.dart' as path;
 import '../../core/constants/app_constants.dart';
+import '../../core/platform/attachment_reader.dart';
 import '../../core/utils/id_generator.dart';
 import '../../data/models/ai_session_model.dart';
 
@@ -34,21 +36,37 @@ class AttachmentService {
     String filePath,
     String sessionUuid,
   ) async {
-    final file = File(filePath);
-    final bytes = await file.readAsBytes();
-    final mimeType = mime.lookupMimeType(filePath) ?? 'application/octet-stream';
-    final fileName = filePath.split(Platform.pathSeparator).last;
+    final bytes = await readAttachmentBytes(filePath);
+    if (bytes == null) {
+      throw StateError('Unable to read attachment: $filePath');
+    }
+    return createFromBytes(
+      fileName: path.basename(filePath),
+      bytes: bytes,
+      sourcePath: filePath,
+    );
+  }
+
+  static AttachmentModel createFromBytes({
+    required String fileName,
+    required Uint8List bytes,
+    String? mimeType,
+    String sourcePath = '',
+  }) {
+    final resolvedMimeType =
+        mimeType ?? mime.lookupMimeType(fileName) ?? 'application/octet-stream';
     final storedName = '${IdGenerator.uuid()}_$fileName';
 
     return AttachmentModel(
       id: IdGenerator.uuid(),
       name: fileName,
       storedName: storedName,
-      path: filePath,
-      type: isImage(mimeType) ? 'image' : 'document',
-      mimeType: mimeType,
+      path: sourcePath,
+      type: isImage(resolvedMimeType) ? 'image' : 'document',
+      mimeType: resolvedMimeType,
       size: bytes.length,
       createdAt: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+      bytes: bytes,
     );
   }
 
@@ -59,21 +77,18 @@ class AttachmentService {
     final result = <Map<String, dynamic>>[];
 
     if (isImage(attachment.mimeType)) {
-      final file = File(attachment.path);
-      if (await file.exists()) {
-        final bytes = await file.readAsBytes();
+      final bytes = await _attachmentBytes(attachment);
+      if (bytes != null) {
         final base64 = base64Encode(bytes);
         result.add({
           'type': 'image_url',
-          'image_url': {
-            'url': 'data:${attachment.mimeType};base64,$base64',
-          },
+          'image_url': {'url': 'data:${attachment.mimeType};base64,$base64'},
         });
       }
     } else if (isTextDocument(attachment.mimeType)) {
-      final file = File(attachment.path);
-      if (await file.exists()) {
-        final text = await file.readAsString();
+      final bytes = await _attachmentBytes(attachment);
+      if (bytes != null) {
+        final text = utf8.decode(bytes, allowMalformed: true);
         result.add({
           'type': 'text',
           'text': '--- 附件: ${attachment.name} ---\n$text',
@@ -97,10 +112,12 @@ class AttachmentService {
 
     if (isTextDocument(attachment.mimeType)) {
       try {
-        final file = File(attachment.path);
-        if (await file.exists()) {
-          final text = await file.readAsString();
-          final preview = text.length > 500 ? '${text.substring(0, 500)}...' : text;
+        final bytes = await _attachmentBytes(attachment);
+        if (bytes != null) {
+          final text = utf8.decode(bytes, allowMalformed: true);
+          final preview = text.length > 500
+              ? '${text.substring(0, 500)}...'
+              : text;
           buffer.writeln('内容摘要:');
           buffer.writeln(preview);
         }
@@ -108,14 +125,19 @@ class AttachmentService {
         buffer.writeln('(无法读取内容)');
       }
     } else {
-      buffer.writeln('(${isImage(attachment.mimeType) ? '图片' : '文档'} 文件，大小: ${attachment.size} 字节)');
+      buffer.writeln(
+        '(${isImage(attachment.mimeType) ? '图片' : '文档'} 文件，大小: ${attachment.size} 字节)',
+      );
     }
 
     return buffer.toString();
   }
 
   /// 验证附件大小和数量
-  static String? validate(List<AttachmentModel> attachments, AttachmentModel newAttachment) {
+  static String? validate(
+    List<AttachmentModel> attachments,
+    AttachmentModel newAttachment,
+  ) {
     if (attachments.length >= AppConstants.maxAttachmentsPerMessage) {
       return '单次最多上传 ${AppConstants.maxAttachmentsPerMessage} 个文件';
     }
@@ -123,5 +145,9 @@ class AttachmentService {
       return '文件大小超过 ${AppConstants.maxAttachmentSizeBytes ~/ (1024 * 1024)}MB 限制';
     }
     return null;
+  }
+
+  static Future<Uint8List?> _attachmentBytes(AttachmentModel attachment) async {
+    return attachment.bytes ?? readAttachmentBytes(attachment.path);
   }
 }

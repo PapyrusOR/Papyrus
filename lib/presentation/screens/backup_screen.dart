@@ -5,7 +5,9 @@ import '../providers/card_provider.dart';
 import '../widgets/common/confirm_dialog.dart';
 
 class BackupScreen extends StatefulWidget {
-  const BackupScreen({super.key});
+  final bool? backupSupported;
+
+  const BackupScreen({super.key, this.backupSupported});
 
   @override
   State<BackupScreen> createState() => _BackupScreenState();
@@ -15,6 +17,9 @@ class _BackupScreenState extends State<BackupScreen> {
   List<BackupInfo> _backups = [];
   bool _isLoading = false;
 
+  bool get _isBackupSupported =>
+      widget.backupSupported ?? BackupService.isSupported;
+
   @override
   void initState() {
     super.initState();
@@ -22,9 +27,10 @@ class _BackupScreenState extends State<BackupScreen> {
   }
 
   Future<void> _loadBackups() async {
+    if (!_isBackupSupported) return;
     setState(() => _isLoading = true);
     _backups = await BackupService.listBackups();
-    setState(() => _isLoading = false);
+    if (mounted) setState(() => _isLoading = false);
   }
 
   @override
@@ -35,56 +41,66 @@ class _BackupScreenState extends State<BackupScreen> {
         commandBar: CommandBar(
           primaryItems: [
             CommandBarButton(
+              key: const Key('backup-create-button'),
               icon: const WindowsIcon(WindowsIcons.save, size: 16),
               label: const Text('创建备份'),
-              onPressed: _createBackup,
+              onPressed: _isBackupSupported ? _createBackup : null,
             ),
           ],
         ),
       ),
-      content: _isLoading
+      content: !_isBackupSupported
+          ? const Center(
+              child: InfoBar(
+                title: Text('当前平台不支持整库备份'),
+                content: Text('学习、AI 和日志功能仍可正常使用。'),
+                severity: InfoBarSeverity.info,
+              ),
+            )
+          : _isLoading
           ? const Center(child: ProgressRing())
           : _backups.isEmpty
-              ? const Center(child: Text('暂无备份'))
-              : ListView.builder(
-                  padding: const EdgeInsets.all(16),
-                  itemCount: _backups.length,
-                  itemBuilder: (context, index) {
-                    final backup = _backups[index];
-                    return Card(
-                      margin: const EdgeInsets.only(bottom: 8),
-                      child: ListTile(
-                        title: Text(backup.name),
-                        subtitle: backup.timestamp != null
-                            ? Text('${backup.timestamp}')
-                            : null,
-                        leading: Icon(
-                          backup.isAuto
-                              ? WindowsIcons.calendar_day
-                              : WindowsIcons.save_local,
-                          size: 20,
-                          color: backup.isAuto
-                              ? Colors.orange
-                              : Colors.blue,
+          ? const Center(child: Text('暂无备份'))
+          : ListView.builder(
+              padding: const EdgeInsets.all(16),
+              itemCount: _backups.length,
+              itemBuilder: (context, index) {
+                final backup = _backups[index];
+                return Card(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  child: ListTile(
+                    title: Text(backup.name),
+                    subtitle: backup.timestamp != null
+                        ? Text('${backup.timestamp}')
+                        : null,
+                    leading: Icon(
+                      backup.isAuto
+                          ? WindowsIcons.calendar_day
+                          : WindowsIcons.save_local,
+                      size: 20,
+                      color: backup.isAuto ? Colors.orange : Colors.blue,
+                    ),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Button(
+                          onPressed: () => _restoreBackup(backup),
+                          child: const Text('恢复'),
                         ),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Button(
-                              onPressed: () => _restoreBackup(backup),
-                              child: const Text('恢复'),
-                            ),
-                            const SizedBox(width: 8),
-                            IconButton(
-                              icon: const WindowsIcon(WindowsIcons.delete, size: 16),
-                              onPressed: () => _deleteBackup(backup),
-                            ),
-                          ],
+                        const SizedBox(width: 8),
+                        IconButton(
+                          icon: const WindowsIcon(
+                            WindowsIcons.delete,
+                            size: 16,
+                          ),
+                          onPressed: () => _deleteBackup(backup),
                         ),
-                      ),
-                    );
-                  },
-                ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
     );
   }
 
@@ -93,13 +109,16 @@ class _BackupScreenState extends State<BackupScreen> {
     await BackupService.createBackup();
     await _loadBackups();
     if (mounted) {
-      displayInfoBar(context, builder: (context, close) {
-        return InfoBar(
-          title: const Text('备份已创建'),
-          severity: InfoBarSeverity.success,
-          onClose: close,
-        );
-      });
+      displayInfoBar(
+        context,
+        builder: (context, close) {
+          return InfoBar(
+            title: const Text('备份已创建'),
+            severity: InfoBarSeverity.success,
+            onClose: close,
+          );
+        },
+      );
     }
   }
 
@@ -114,18 +133,23 @@ class _BackupScreenState extends State<BackupScreen> {
 
     setState(() => _isLoading = true);
     await BackupService.restoreBackup(backup.path);
+    if (!mounted) return;
     await context.read<CardProvider>().loadCards();
     await _loadBackups();
+    if (!mounted) return;
     setState(() => _isLoading = false);
 
     if (mounted) {
-      displayInfoBar(context, builder: (context, close) {
-        return InfoBar(
-          title: const Text('备份已恢复'),
-          severity: InfoBarSeverity.success,
-          onClose: close,
-        );
-      });
+      displayInfoBar(
+        context,
+        builder: (context, close) {
+          return InfoBar(
+            title: const Text('备份已恢复'),
+            severity: InfoBarSeverity.success,
+            onClose: close,
+          );
+        },
+      );
     }
   }
 
@@ -140,6 +164,6 @@ class _BackupScreenState extends State<BackupScreen> {
     setState(() => _isLoading = true);
     await BackupService.deleteBackup(backup.path);
     await _loadBackups();
-    setState(() => _isLoading = false);
+    if (mounted) setState(() => _isLoading = false);
   }
 }

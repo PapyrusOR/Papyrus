@@ -1,6 +1,5 @@
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:provider/provider.dart';
-import '../../core/platform/path_resolver.dart';
 import '../providers/log_provider.dart';
 import '../widgets/common/confirm_dialog.dart';
 import '../widgets/log/log_entry_tile.dart';
@@ -65,13 +64,13 @@ class _LogViewerScreenState extends State<LogViewerScreen> {
                 child: provider.isLoading
                     ? const Center(child: ProgressRing())
                     : provider.entries.isEmpty
-                        ? const Center(child: Text('暂无日志'))
-                        : ListView.builder(
-                            itemCount: provider.entries.length,
-                            itemBuilder: (context, index) {
-                              return LogEntryTile(entry: provider.entries[index]);
-                            },
-                          ),
+                    ? const Center(child: Text('暂无日志'))
+                    : ListView.builder(
+                        itemCount: provider.entries.length,
+                        itemBuilder: (context, index) {
+                          return LogEntryTile(entry: provider.entries[index]);
+                        },
+                      ),
               ),
             ],
           ),
@@ -80,7 +79,11 @@ class _LogViewerScreenState extends State<LogViewerScreen> {
     );
   }
 
-  Widget _buildFilterBar(BuildContext context, LogProvider provider, bool isNarrow) {
+  Widget _buildFilterBar(
+    BuildContext context,
+    LogProvider provider,
+    bool isNarrow,
+  ) {
     return Container(
       padding: EdgeInsets.all(isNarrow ? 12 : 16),
       child: isNarrow
@@ -155,18 +158,20 @@ class _LogViewerScreenState extends State<LogViewerScreen> {
 
   Future<void> _exportLogs(BuildContext context, LogProvider provider) async {
     final now = DateTime.now();
-    final fileName = 'logs_${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}_${now.hour}${now.minute}${now.second}.txt';
-    final dataDir = await PathResolver.dataDir;
-    final path = '${dataDir.path}/$fileName';
-    await provider.exportLogs(path);
+    final fileName =
+        'logs_${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}_${now.hour}${now.minute}${now.second}.txt';
+    final destination = await provider.exportLogs(fileName);
     if (context.mounted) {
-      displayInfoBar(context, builder: (context, close) {
-        return InfoBar(
-          title: Text('日志已导出到: $path'),
-          severity: InfoBarSeverity.success,
-          onClose: close,
-        );
-      });
+      displayInfoBar(
+        context,
+        builder: (context, close) {
+          return InfoBar(
+            title: Text('日志已导出到: $destination'),
+            severity: InfoBarSeverity.success,
+            onClose: close,
+          );
+        },
+      );
     }
   }
 
