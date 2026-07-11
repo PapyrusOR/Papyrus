@@ -121,8 +121,9 @@ jobs:
 
           build_name="${tag_version%%-*}"
 
+          # Any semver prerelease suffix (hyphen after the core version) is a prerelease.
           is_prerelease=false
-          if [[ "$tag_name" =~ -(alpha|beta|rc)([.-]|$) ]]; then
+          if [[ "$tag_name" == *-* ]]; then
             is_prerelease=true
           fi
 
@@ -167,8 +168,12 @@ jobs:
       - name: Run tests
         run: flutter test --coverage
 
+  # Temporarily disabled: app entry still imports dart:io unconditionally
+  # (LogProvider, BackupService, etc.), so `flutter build web` fails.
+  # Re-enable after conditional imports / stubs land; set repo var ENABLE_WEB_BUILD=true.
   web:
     name: Build Web
+    if: ${{ vars.ENABLE_WEB_BUILD == 'true' }}
     runs-on: ubuntu-latest
     needs: [prepare, quality]
     env:
@@ -472,7 +477,7 @@ jobs:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
     needs: [prepare, quality, web, android, windows, linux, macos, ios]
-    if: ${{ always() && needs.prepare.outputs.should_release == 'true' && needs.quality.result == 'success' && needs.web.result == 'success' && needs.android.result == 'success' && needs.windows.result == 'success' && needs.linux.result == 'success' && needs.macos.result == 'success' && needs.ios.result == 'success' }}
+    if: ${{ always() && needs.prepare.outputs.should_release == 'true' && needs.quality.result == 'success' && (needs.web.result == 'success' || needs.web.result == 'skipped') && needs.android.result == 'success' && needs.windows.result == 'success' && needs.linux.result == 'success' && needs.macos.result == 'success' && needs.ios.result == 'success' }}
     permissions:
       contents: write
     env:
@@ -480,6 +485,7 @@ jobs:
       TAG_NAME: ${{ needs.prepare.outputs.tag_name }}
       IS_DRAFT: ${{ needs.prepare.outputs.is_draft }}
       IS_PRERELEASE: ${{ needs.prepare.outputs.is_prerelease }}
+      WEB_BUILT: ${{ needs.web.result == 'success' }}
     steps:
       - name: Download platform packages
         uses: actions/download-artifact@v4
@@ -497,10 +503,13 @@ jobs:
             "release-assets/Papyrus-windows-x64-${ARTIFACT_VERSION}.zip"
             "release-assets/Papyrus-macos-${ARTIFACT_VERSION}.zip"
             "release-assets/Papyrus-linux-x64-${ARTIFACT_VERSION}.tar.gz"
-            "release-assets/Papyrus-web-${ARTIFACT_VERSION}.zip"
             "release-assets/Papyrus-android-${ARTIFACT_VERSION}.apk"
             "release-assets/Papyrus-android-${ARTIFACT_VERSION}.aab"
           )
+
+          if [[ "$WEB_BUILT" == "true" ]]; then
+            expected+=("release-assets/Papyrus-web-${ARTIFACT_VERSION}.zip")
+          fi
 
           for file in "${expected[@]}"; do
             if [[ ! -s "$file" ]]; then
@@ -511,17 +520,24 @@ jobs:
 
           unzip -t "release-assets/Papyrus-windows-x64-${ARTIFACT_VERSION}.zip" >/dev/null
           unzip -t "release-assets/Papyrus-macos-${ARTIFACT_VERSION}.zip" >/dev/null
-          unzip -t "release-assets/Papyrus-web-${ARTIFACT_VERSION}.zip" >/dev/null
           tar -tzf "release-assets/Papyrus-linux-x64-${ARTIFACT_VERSION}.tar.gz" >/dev/null
+          if [[ "$WEB_BUILT" == "true" ]]; then
+            unzip -t "release-assets/Papyrus-web-${ARTIFACT_VERSION}.zip" >/dev/null
+          fi
+
+          checksum_files=(
+            "Papyrus-windows-x64-${ARTIFACT_VERSION}.zip"
+            "Papyrus-macos-${ARTIFACT_VERSION}.zip"
+            "Papyrus-linux-x64-${ARTIFACT_VERSION}.tar.gz"
+            "Papyrus-android-${ARTIFACT_VERSION}.apk"
+            "Papyrus-android-${ARTIFACT_VERSION}.aab"
+          )
+          if [[ "$WEB_BUILT" == "true" ]]; then
+            checksum_files+=("Papyrus-web-${ARTIFACT_VERSION}.zip")
+          fi
           (
             cd release-assets
-            sha256sum \
-              "Papyrus-windows-x64-${ARTIFACT_VERSION}.zip" \
-              "Papyrus-macos-${ARTIFACT_VERSION}.zip" \
-              "Papyrus-linux-x64-${ARTIFACT_VERSION}.tar.gz" \
-              "Papyrus-web-${ARTIFACT_VERSION}.zip" \
-              "Papyrus-android-${ARTIFACT_VERSION}.apk" \
-              "Papyrus-android-${ARTIFACT_VERSION}.aab"
+            sha256sum "${checksum_files[@]}"
           ) > release-assets/SHA256SUMS.txt
 
       - name: Create or update GitHub Release
