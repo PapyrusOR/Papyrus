@@ -1,0 +1,605 @@
+name: Papyrus Build and Release
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag, for example v0.1.0'
+        required: true
+        type: string
+      draft:
+        description: 'Create the GitHub Release as a draft'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: papyrus-release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  FLUTTER_VERSION: '3.41.9'
+
+jobs:
+  prepare:
+    name: Prepare release metadata
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.metadata.outputs.should_release }}
+      tag_name: ${{ steps.metadata.outputs.tag_name }}
+      is_draft: ${{ steps.metadata.outputs.is_draft }}
+      is_prerelease: ${{ steps.metadata.outputs.is_prerelease }}
+      build_name: ${{ steps.metadata.outputs.build_name }}
+      build_number: ${{ steps.metadata.outputs.build_number }}
+      artifact_version: ${{ steps.metadata.outputs.artifact_version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate release metadata
+        id: metadata
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+          INPUT_DRAFT: ${{ github.event.inputs.draft }}
+          AUTO_RELEASE_DRAFT: ${{ vars.AUTO_RELEASE_DRAFT }}
+          RUN_NUMBER: ${{ github.run_number }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          pubspec_version="$(awk '/^version:[[:space:]]*/ { print $2; exit }' pubspec.yaml)"
+          if [[ -z "$pubspec_version" ]]; then
+            echo "Unable to read version from pubspec.yaml"
+            exit 1
+          fi
+
+          pubspec_name="${pubspec_version%%+*}"
+          tag_name=""
+          tag_version="$pubspec_name"
+          build_name="$pubspec_name"
+          should_release=false
+          is_draft=false
+
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            tag_name="$INPUT_TAG"
+            should_release=true
+            if [[ "$INPUT_DRAFT" == "true" ]]; then
+              is_draft=true
+            fi
+          elif [[ "$REF_TYPE" == "tag" && "$REF_NAME" == v* ]]; then
+            tag_name="$REF_NAME"
+            should_release=true
+          elif [[ "$EVENT_NAME" == "push" && "$REF_TYPE" == "branch" && "$REF_NAME" == "main" && "$AUTO_RELEASE_DRAFT" == "true" ]]; then
+            tag_name="v${pubspec_name}"
+            tag_ref="repos/${GH_REPO}/git/ref/tags/${tag_name}"
+            tag_lookup_output=""
+
+            if tag_lookup_output="$(gh api "$tag_ref" --jq '.ref' 2>&1)"; then
+              echo "Remote tag $tag_name already exists; skipping automatic draft release."
+            elif [[ "$tag_lookup_output" == *"404"* || "$tag_lookup_output" == *"Not Found"* ]]; then
+              echo "Remote tag $tag_name does not exist; enabling automatic draft release."
+              should_release=true
+              is_draft=true
+            else
+              echo "Unable to inspect remote tag $tag_name:" >&2
+              echo "$tag_lookup_output" >&2
+              exit 1
+            fi
+          fi
+
+          if [[ "$should_release" == "true" ]]; then
+            if [[ ! "$tag_name" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+              echo "Release tag must match v<semver>: $tag_name"
+              exit 1
+            fi
+
+            tag_version="${tag_name#v}"
+            if [[ "$tag_version" != "$pubspec_name" ]]; then
+              echo "Release tag $tag_name does not match pubspec.yaml version $pubspec_version"
+              echo "The tag must match the version before the optional +build suffix."
+              exit 1
+            fi
+          else
+            tag_name="snapshot-${GITHUB_SHA:0:7}"
+          fi
+
+          build_name="${tag_version%%-*}"
+
+          # Any semver prerelease suffix (hyphen after the core version) is a prerelease.
+          is_prerelease=false
+          if [[ "$tag_name" == *-* ]]; then
+            is_prerelease=true
+          fi
+
+          {
+            echo "should_release=$should_release"
+            echo "tag_name=$tag_name"
+            echo "is_draft=$is_draft"
+            echo "is_prerelease=$is_prerelease"
+            echo "build_name=$build_name"
+            echo "build_number=$RUN_NUMBER"
+            echo "artifact_version=$tag_version"
+          } >> "$GITHUB_OUTPUT"
+
+  quality:
+    name: Analyze and test
+    runs-on: ubuntu-latest
+    needs: prepare
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+          pub-cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Regenerate Drift code
+        run: dart run build_runner build --delete-conflicting-outputs
+
+      - name: Verify generated Drift code
+        run: git diff --exit-code -- lib/data/local/app_database.g.dart
+
+      - name: Analyze Dart code
+        # Pre-existing info-level lints should not block CI; warnings/errors still fail.
+        run: flutter analyze --no-fatal-infos
+
+      - name: Run tests
+        run: flutter test --coverage
+
+  # Temporarily disabled: app entry still imports dart:io unconditionally
+  # (LogProvider, BackupService, etc.), so `flutter build web` fails.
+  # Re-enable after conditional imports / stubs land; set repo var ENABLE_WEB_BUILD=true.
+  web:
+    name: Build Web
+    if: ${{ vars.ENABLE_WEB_BUILD == 'true' }}
+    runs-on: ubuntu-latest
+    needs: [prepare, quality]
+    env:
+      ARTIFACT_VERSION: ${{ needs.prepare.outputs.artifact_version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+          pub-cache: true
+
+      - name: Enable Web
+        run: flutter config --enable-web
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build Web release
+        run: flutter build web --release
+
+      - name: Package Web release
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d build/web
+          test -n "$(find build/web -type f -print -quit)"
+          mkdir -p artifacts
+          (cd build && zip -qr "../artifacts/Papyrus-web-${ARTIFACT_VERSION}.zip" web)
+          test -s "artifacts/Papyrus-web-${ARTIFACT_VERSION}.zip"
+
+      - name: Upload Web package
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-web
+          path: artifacts/Papyrus-web-${{ needs.prepare.outputs.artifact_version }}.zip
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  android:
+    name: Build Android
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: ubuntu-latest
+    needs: [prepare, quality]
+    env:
+      BUILD_NAME: ${{ needs.prepare.outputs.build_name }}
+      BUILD_NUMBER: ${{ needs.prepare.outputs.build_number }}
+      ARTIFACT_VERSION: ${{ needs.prepare.outputs.artifact_version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+          pub-cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build Android APK
+        run: flutter build apk --release --build-name "$BUILD_NAME" --build-number "$BUILD_NUMBER"
+
+      - name: Build Android App Bundle
+        run: flutter build appbundle --release --build-name "$BUILD_NAME" --build-number "$BUILD_NUMBER"
+
+      - name: Package Android releases
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s build/app/outputs/flutter-apk/app-release.apk
+          test -s build/app/outputs/bundle/release/app-release.aab
+          mkdir -p artifacts
+          cp build/app/outputs/flutter-apk/app-release.apk \
+            "artifacts/Papyrus-android-${ARTIFACT_VERSION}.apk"
+          cp build/app/outputs/bundle/release/app-release.aab \
+            "artifacts/Papyrus-android-${ARTIFACT_VERSION}.aab"
+          echo "Android release uses the repository debug signing configuration and is not Play Store-ready."
+
+      - name: Upload Android packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-android
+          path: artifacts/Papyrus-android-${{ needs.prepare.outputs.artifact_version }}.*
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  windows:
+    name: Build Windows
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: windows-latest
+    needs: [prepare, quality]
+    env:
+      BUILD_NAME: ${{ needs.prepare.outputs.build_name }}
+      BUILD_NUMBER: ${{ needs.prepare.outputs.build_number }}
+      ARTIFACT_VERSION: ${{ needs.prepare.outputs.artifact_version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+          pub-cache: true
+
+      - name: Enable Windows desktop
+        run: flutter config --enable-windows-desktop
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build Windows release
+        run: flutter build windows --release --build-name $env:BUILD_NAME --build-number $env:BUILD_NUMBER
+
+      - name: Package Windows release
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $releaseDir = Join-Path $PWD 'build/windows/x64/runner/Release'
+          if (-not (Test-Path $releaseDir)) { throw "Missing Windows release directory: $releaseDir" }
+          if (-not (Get-ChildItem $releaseDir -File -Recurse)) { throw 'Windows release directory is empty' }
+          $artifactDir = Join-Path $PWD 'artifacts'
+          New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
+          $zipPath = Join-Path $artifactDir "Papyrus-windows-x64-$env:ARTIFACT_VERSION.zip"
+          Compress-Archive -Path $releaseDir -DestinationPath $zipPath -Force
+          if ((Get-Item $zipPath).Length -le 0) { throw 'Windows package is empty' }
+
+      - name: Upload Windows package
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-windows
+          path: artifacts/Papyrus-windows-x64-${{ needs.prepare.outputs.artifact_version }}.zip
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  linux:
+    name: Build Linux
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: ubuntu-latest
+    needs: [prepare, quality]
+    env:
+      ARTIFACT_VERSION: ${{ needs.prepare.outputs.artifact_version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+          pub-cache: true
+
+      - name: Enable Linux desktop
+        run: flutter config --enable-linux-desktop
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build Linux release
+        run: flutter build linux --release
+
+      - name: Package Linux release
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle_dir=build/linux/x64/release/bundle
+          test -d "$bundle_dir"
+          test -n "$(find "$bundle_dir" -type f -print -quit)"
+          mkdir -p artifacts
+          tar -czf "artifacts/Papyrus-linux-x64-${ARTIFACT_VERSION}.tar.gz" \
+            -C build/linux/x64/release bundle
+          test -s "artifacts/Papyrus-linux-x64-${ARTIFACT_VERSION}.tar.gz"
+
+      - name: Upload Linux package
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-linux
+          path: artifacts/Papyrus-linux-x64-${{ needs.prepare.outputs.artifact_version }}.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  macos:
+    name: Build macOS
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: macos-latest
+    needs: [prepare, quality]
+    env:
+      BUILD_NAME: ${{ needs.prepare.outputs.build_name }}
+      BUILD_NUMBER: ${{ needs.prepare.outputs.build_number }}
+      ARTIFACT_VERSION: ${{ needs.prepare.outputs.artifact_version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+          pub-cache: true
+
+      - name: Enable macOS desktop
+        run: flutter config --enable-macos-desktop
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build macOS release
+        run: flutter build macos --release --no-codesign --build-name "$BUILD_NAME" --build-number "$BUILD_NUMBER"
+
+      - name: Package macOS release
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_path="$(find build/macos/Build/Products/Release -maxdepth 1 -type d -name '*.app' -print -quit)"
+          if [[ -z "$app_path" ]]; then
+            echo 'No macOS .app bundle was produced'
+            exit 1
+          fi
+          mkdir -p artifacts
+          ditto -c -k --sequesterRsrc --keepParent "$app_path" \
+            "artifacts/Papyrus-macos-${ARTIFACT_VERSION}.zip"
+          test -s "artifacts/Papyrus-macos-${ARTIFACT_VERSION}.zip"
+
+      - name: Upload macOS package
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-macos
+          path: artifacts/Papyrus-macos-${{ needs.prepare.outputs.artifact_version }}.zip
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  ios:
+    name: Validate iOS build
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: macos-latest
+    needs: [prepare, quality]
+    env:
+      BUILD_NAME: ${{ needs.prepare.outputs.build_name }}
+      BUILD_NUMBER: ${{ needs.prepare.outputs.build_number }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+          pub-cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build iOS without code signing
+        run: flutter build ios --release --no-codesign --build-name "$BUILD_NAME" --build-number "$BUILD_NUMBER"
+
+      - name: Verify iOS app bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_path="$(find build/ios/iphoneos -maxdepth 1 -type d -name '*.app' -print -quit)"
+          if [[ -z "$app_path" ]]; then
+            echo 'No iOS .app bundle was produced'
+            exit 1
+          fi
+          echo "Validated unsigned iOS bundle: $app_path"
+
+  publish:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+    needs: [prepare, quality, web, android, windows, linux, macos, ios]
+    if: ${{ always() && needs.prepare.outputs.should_release == 'true' && needs.quality.result == 'success' && (needs.web.result == 'success' || needs.web.result == 'skipped') && needs.android.result == 'success' && needs.windows.result == 'success' && needs.linux.result == 'success' && needs.macos.result == 'success' && needs.ios.result == 'success' }}
+    permissions:
+      contents: write
+    env:
+      ARTIFACT_VERSION: ${{ needs.prepare.outputs.artifact_version }}
+      TAG_NAME: ${{ needs.prepare.outputs.tag_name }}
+      IS_DRAFT: ${{ needs.prepare.outputs.is_draft }}
+      IS_PRERELEASE: ${{ needs.prepare.outputs.is_prerelease }}
+      WEB_BUILT: ${{ needs.web.result == 'success' }}
+    steps:
+      - name: Download platform packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: package-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Validate packages and create checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          expected=(
+            "release-assets/Papyrus-windows-x64-${ARTIFACT_VERSION}.zip"
+            "release-assets/Papyrus-macos-${ARTIFACT_VERSION}.zip"
+            "release-assets/Papyrus-linux-x64-${ARTIFACT_VERSION}.tar.gz"
+            "release-assets/Papyrus-android-${ARTIFACT_VERSION}.apk"
+            "release-assets/Papyrus-android-${ARTIFACT_VERSION}.aab"
+          )
+
+          if [[ "$WEB_BUILT" == "true" ]]; then
+            expected+=("release-assets/Papyrus-web-${ARTIFACT_VERSION}.zip")
+          fi
+
+          for file in "${expected[@]}"; do
+            if [[ ! -s "$file" ]]; then
+              echo "Missing or empty release asset: $file"
+              exit 1
+            fi
+          done
+
+          unzip -t "release-assets/Papyrus-windows-x64-${ARTIFACT_VERSION}.zip" >/dev/null
+          unzip -t "release-assets/Papyrus-macos-${ARTIFACT_VERSION}.zip" >/dev/null
+          tar -tzf "release-assets/Papyrus-linux-x64-${ARTIFACT_VERSION}.tar.gz" >/dev/null
+          if [[ "$WEB_BUILT" == "true" ]]; then
+            unzip -t "release-assets/Papyrus-web-${ARTIFACT_VERSION}.zip" >/dev/null
+          fi
+
+          checksum_files=(
+            "Papyrus-windows-x64-${ARTIFACT_VERSION}.zip"
+            "Papyrus-macos-${ARTIFACT_VERSION}.zip"
+            "Papyrus-linux-x64-${ARTIFACT_VERSION}.tar.gz"
+            "Papyrus-android-${ARTIFACT_VERSION}.apk"
+            "Papyrus-android-${ARTIFACT_VERSION}.aab"
+          )
+          if [[ "$WEB_BUILT" == "true" ]]; then
+            checksum_files+=("Papyrus-web-${ARTIFACT_VERSION}.zip")
+          fi
+          (
+            cd release-assets
+            sha256sum "${checksum_files[@]}"
+          ) > release-assets/SHA256SUMS.txt
+
+      - name: Create or update GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TARGET_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          tag_ref="repos/${GH_REPO}/git/ref/tags/${TAG_NAME}"
+          tag_lookup_output=""
+          if ! tag_lookup_output="$(gh api "$tag_ref" --jq '.object.type' 2>&1)"; then
+            if [[ "$tag_lookup_output" == *"404"* || "$tag_lookup_output" == *"Not Found"* ]]; then
+              echo "Remote tag $TAG_NAME does not exist; it will be created at $TARGET_SHA."
+            else
+              echo "Unable to inspect remote tag $TAG_NAME:" >&2
+              echo "$tag_lookup_output" >&2
+              exit 1
+            fi
+          else
+            tag_object_type="$tag_lookup_output"
+            tag_object_sha="$(gh api "$tag_ref" --jq '.object.sha')"
+
+            while [[ "$tag_object_type" == "tag" ]]; do
+              tag_object_type="$(gh api "repos/${GH_REPO}/git/tags/${tag_object_sha}" --jq '.object.type')"
+              tag_object_sha="$(gh api "repos/${GH_REPO}/git/tags/${tag_object_sha}" --jq '.object.sha')"
+            done
+
+            if [[ "$tag_object_type" != "commit" ]]; then
+              echo "Remote tag $TAG_NAME resolves to unsupported object type: $tag_object_type" >&2
+              exit 1
+            fi
+
+            if [[ "$tag_object_sha" != "$TARGET_SHA" ]]; then
+              echo "Refusing to publish $TAG_NAME: remote tag resolves to $tag_object_sha, but this workflow targets $TARGET_SHA." >&2
+              echo "The release tag must point to the exact commit that produced these artifacts." >&2
+              exit 1
+            fi
+
+            echo "Verified $TAG_NAME points to $TARGET_SHA."
+          fi
+
+          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            gh release upload "$TAG_NAME" release-assets/* --clobber
+            gh release edit "$TAG_NAME" \
+              --title "Papyrus $TAG_NAME" \
+              --draft="$IS_DRAFT" \
+              --prerelease="$IS_PRERELEASE"
+          else
+            release_flags=(
+              --title "Papyrus $TAG_NAME"
+              --generate-notes
+              --target "$TARGET_SHA"
+            )
+            if [[ "$IS_DRAFT" == "true" ]]; then
+              release_flags+=(--draft)
+            fi
+            if [[ "$IS_PRERELEASE" == "true" ]]; then
+              release_flags+=(--prerelease)
+            fi
+            gh release create "$TAG_NAME" release-assets/* "${release_flags[@]}"
+          fi
