@@ -25,8 +25,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: papyrus-release-${{ github.ref }}
-  cancel-in-progress: false
+  group: papyrus-release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   FLUTTER_VERSION: '3.41.9'
@@ -196,6 +196,7 @@ jobs:
 
   android:
     name: Build Android
+    if: ${{ github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
     needs: [prepare, quality]
     env:
@@ -254,6 +255,7 @@ jobs:
 
   windows:
     name: Build Windows
+    if: ${{ github.event_name != 'pull_request' }}
     runs-on: windows-latest
     needs: [prepare, quality]
     env:
@@ -305,6 +307,7 @@ jobs:
 
   linux:
     name: Build Linux
+    if: ${{ github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
     needs: [prepare, quality]
     env:
@@ -358,6 +361,7 @@ jobs:
 
   macos:
     name: Build macOS
+    if: ${{ github.event_name != 'pull_request' }}
     runs-on: macos-latest
     needs: [prepare, quality]
     env:
@@ -410,6 +414,7 @@ jobs:
 
   ios:
     name: Validate iOS build
+    if: ${{ github.event_name != 'pull_request' }}
     runs-on: macos-latest
     needs: [prepare, quality]
     env:
@@ -508,6 +513,39 @@ jobs:
           TARGET_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
+
+          tag_ref="repos/${GH_REPO}/git/ref/tags/${TAG_NAME}"
+          tag_lookup_output=""
+          if ! tag_lookup_output="$(gh api "$tag_ref" --jq '.object.type' 2>&1)"; then
+            if [[ "$tag_lookup_output" == *"404"* || "$tag_lookup_output" == *"Not Found"* ]]; then
+              echo "Remote tag $TAG_NAME does not exist; it will be created at $TARGET_SHA."
+            else
+              echo "Unable to inspect remote tag $TAG_NAME:" >&2
+              echo "$tag_lookup_output" >&2
+              exit 1
+            fi
+          else
+            tag_object_type="$tag_lookup_output"
+            tag_object_sha="$(gh api "$tag_ref" --jq '.object.sha')"
+
+            while [[ "$tag_object_type" == "tag" ]]; do
+              tag_object_type="$(gh api "repos/${GH_REPO}/git/tags/${tag_object_sha}" --jq '.object.type')"
+              tag_object_sha="$(gh api "repos/${GH_REPO}/git/tags/${tag_object_sha}" --jq '.object.sha')"
+            done
+
+            if [[ "$tag_object_type" != "commit" ]]; then
+              echo "Remote tag $TAG_NAME resolves to unsupported object type: $tag_object_type" >&2
+              exit 1
+            fi
+
+            if [[ "$tag_object_sha" != "$TARGET_SHA" ]]; then
+              echo "Refusing to publish $TAG_NAME: remote tag resolves to $tag_object_sha, but this workflow targets $TARGET_SHA." >&2
+              echo "The release tag must point to the exact commit that produced these artifacts." >&2
+              exit 1
+            fi
+
+            echo "Verified $TAG_NAME points to $TARGET_SHA."
+          fi
 
           if gh release view "$TAG_NAME" >/dev/null 2>&1; then
             gh release upload "$TAG_NAME" release-assets/* --clobber

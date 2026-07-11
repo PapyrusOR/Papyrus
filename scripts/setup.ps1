@@ -26,7 +26,7 @@ try {
     Write-Host "安装项目依赖..."
     flutter pub get
 
-    Write-Host "生成 Drift 代码..."
+    Write-Host "生成 Drift 代码（保持非破坏性）..."
     dart run build_runner build
 
     Write-Host "运行单元测试..."
