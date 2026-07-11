@@ -532,4 +532,25 @@ flutter build windows
 
 ---
 
+## Cursor Cloud specific instructions
+
+> 面向后续 Cloud Agent（环境已由 update script + VM 快照预装依赖）。仅记录非显而易见的启动/运行注意事项。
+
+**Flutter/Dart 安装**: Flutter SDK 装在 `/opt/flutter`（当前 stable 3.44.6 / Dart 3.12.2，满足 `sdk: ^3.11.5`），已通过 `~/.bashrc` 加入 `PATH`。update script 只做 `flutter pub get`；系统依赖已固化在 VM 快照里，不放入 update script。
+
+**首选运行平台 = Linux 桌面**。Cloud VM 有可用图形显示 `DISPLAY=:1`（computerUse 桌面）。运行主 App：
+```bash
+DISPLAY=:1 LIBGL_ALWAYS_SOFTWARE=1 flutter run -d linux
+```
+- 无 GPU，必须 `LIBGL_ALWAYS_SOFTWARE=1` 用软件渲染，否则可能黑屏/崩溃。
+- 常规命令见 AGENTS.md 第 7.2 节：`flutter analyze`（lint）、`flutter test`（单测，27 个）、`flutter run -d linux`（运行）。
+
+**Web 目标（`-d chrome` / web-server）当前开箱即用会崩溃**：`AppDatabase.defaults()` 调 `driftDatabase(name: 'papyrus_db')` 未传 `web:` 参数，运行时抛 `When compiling to the web, the 'web' parameter needs to be set`。要跑 Web 需在代码里补 `DriftWebOptions`（`sqlite3.wasm` + `drift_worker.js` 放入 `web/`）——属于代码改动，环境配置无法绕过。除非任务要求 Web，否则用 Linux 桌面验证。
+
+**Drift/SQLite 原生库**: Linux 桌面与 `flutter test` 都用系统 `libsqlite3`（快照已装 `libsqlite3-0`/`-dev`）。缺失时 `sqlite3` FFI 报 `libsqlite3.so: cannot open shared object file`。
+
+**path_provider 依赖 `xdg-user-dirs`**: 桌面端 `getApplicationDocumentsDirectory()` 通过 `xdg-user-dir DOCUMENTS` 定位数据库目录；缺失会抛 `MissingPlatformDirectoryException`。快照已装 `xdg-user-dirs` 且已 `xdg-user-dirs-update`。
+
+**首次 Linux 构建切换后**：若之前跑过失败的构建残留 CMake 缓存（如报 install 到 `/usr/local/papyrus` 权限错误），执行 `flutter clean` 再重跑。
+
 **文档结束**
