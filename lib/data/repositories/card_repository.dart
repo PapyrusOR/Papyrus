@@ -2,6 +2,7 @@ import '../models/card_model.dart';
 
 abstract class CardRepository {
   Future<List<CardModel>> loadAll();
+  Future<int> countCards();
   Future<List<CardModel>> getDueCards();
   Future<void> saveAll(List<CardModel> cards);
   Future<void> add(CardModel card);

@@ -1,8 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
-import '../ai/services/tool_parser.dart';
-import '../ai/tools/tool_executor.dart';
 import '../data/repositories/card_repository.dart';
+import '../logging/logger.dart';
+import 'mcp_tool_handler.dart';
 
 /// MCP HTTP 服务器
 class MCPServer {
@@ -12,35 +12,49 @@ class MCPServer {
   MCPServer(this._cardRepository);
 
   bool get isRunning => _server != null;
+  int? get boundPort => _server?.port;
 
   Future<void> start({String host = '127.0.0.1', int port = 8787}) async {
     if (_server != null) return;
 
     _server = await HttpServer.bind(host, port);
-    print('MCP Server running on http://$host:$port');
-
-    await for (final request in _server!) {
-      _handleRequest(request);
-    }
+    _server!.listen(_handleRequest);
+    Logger.instance.info(
+      'MCP server started',
+      metadata: {'host': host, 'port': port},
+    );
   }
 
   Future<void> stop() async {
-    await _server?.close();
+    await _server?.close(force: true);
     _server = null;
-    print('MCP Server stopped');
+    Logger.instance.info('MCP server stopped');
   }
 
   void _handleRequest(HttpRequest request) {
+    Logger.instance.event(
+      'MCP request',
+      metadata: {'method': request.method, 'path': request.uri.path},
+    );
+
     // CORS 头
     request.response.headers.add('Access-Control-Allow-Origin', '*');
-    request.response.headers.add('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    request.response.headers.add('Access-Control-Allow-Headers', 'Content-Type');
+    request.response.headers.add(
+      'Access-Control-Allow-Methods',
+      'GET, POST, OPTIONS',
+    );
+    request.response.headers.add(
+      'Access-Control-Allow-Headers',
+      'Content-Type',
+    );
 
     if (request.method == 'OPTIONS') {
       request.response.statusCode = HttpStatus.noContent;
       request.response.close();
       return;
     }
+
+    request.response.headers.contentType = ContentType.json;
 
     final path = request.uri.path;
 
@@ -64,12 +78,28 @@ class MCPServer {
   void _handleHealth(HttpRequest request) {
     request.response
       ..statusCode = HttpStatus.ok
-      ..write(jsonEncode({'status': 'ok'}))
+      ..write(
+        jsonEncode({
+          'status': 'ok',
+          'api_version': '1.1',
+          'protocol': 'papyrus-mcp',
+        }),
+      )
       ..close();
   }
 
   void _handleTools(HttpRequest request) {
     final tools = [
+      {
+        'name': 'list_cards',
+        'description': 'List cards, optionally filtered by query',
+      },
+      {'name': 'get_card', 'description': 'Get a card by id'},
+      {'name': 'get_due_cards', 'description': 'Get the current review queue'},
+      {
+        'name': 'review_card',
+        'description': 'Submit a review grade for a card',
+      },
       {'name': 'create_card', 'description': '创建新卡片'},
       {'name': 'update_card', 'description': '更新卡片'},
       {'name': 'delete_card', 'description': '删除卡片'},
@@ -102,13 +132,22 @@ class MCPServer {
         return;
       }
 
-      final executor = ToolExecutor(_cardRepository);
-      final result = await executor.execute(ToolCall(tool: tool, params: params));
+      final result = await MCPToolHandler(
+        _cardRepository,
+      ).execute(tool, params);
 
       request.response
         ..statusCode = HttpStatus.ok
         ..write(jsonEncode({'result': result}))
         ..close();
+    } on FormatException catch (e) {
+      request.response.statusCode = HttpStatus.badRequest;
+      request.response.write(jsonEncode({'error': e.message}));
+      request.response.close();
+    } on MCPToolException catch (e) {
+      request.response.statusCode = HttpStatus.badRequest;
+      request.response.write(jsonEncode({'error': e.message}));
+      request.response.close();
     } catch (e) {
       request.response.statusCode = HttpStatus.internalServerError;
       request.response.write(jsonEncode({'error': e.toString()}));

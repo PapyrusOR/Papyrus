@@ -51,12 +51,10 @@ class _StudyScreenState extends State<StudyScreen> {
               autofocus: true,
               child: Column(
                 children: [
-                  Expanded(
-                    child: _buildBody(provider, padding, isNarrow),
-                  ),
+                  Expanded(child: _buildBody(provider, padding, isNarrow)),
                   StudyStatusBar(
-                    dueCount: provider.dueCount - provider.currentIndex,
-                    totalCount: provider.dueCount,
+                    dueCount: provider.remainingDueCount,
+                    totalCount: provider.totalCount,
                   ),
                 ],
               ),
@@ -69,10 +67,13 @@ class _StudyScreenState extends State<StudyScreen> {
 
   Widget _buildBody(StudyProvider provider, EdgeInsets padding, bool isNarrow) {
     switch (provider.state) {
-      case StudyState.empty:
+      case StudyState.noCards:
         return EmptyDueWidget(
+          hasCards: false,
           onRefresh: () => provider.loadDueCards(),
         );
+      case StudyState.noDueCards:
+        return EmptyDueWidget(onRefresh: () => provider.loadDueCards());
       case StudyState.question:
         return _buildQuestionView(provider, padding, isNarrow);
       case StudyState.answer:
@@ -80,7 +81,11 @@ class _StudyScreenState extends State<StudyScreen> {
     }
   }
 
-  Widget _buildQuestionView(StudyProvider provider, EdgeInsets padding, bool isNarrow) {
+  Widget _buildQuestionView(
+    StudyProvider provider,
+    EdgeInsets padding,
+    bool isNarrow,
+  ) {
     final card = provider.currentCard;
     if (card == null) return const EmptyDueWidget();
 
@@ -90,17 +95,16 @@ class _StudyScreenState extends State<StudyScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            CardFaceWidget(
-              title: '题目',
-              content: card.q,
-            ),
+            CardFaceWidget(title: '题目', content: card.q),
             SizedBox(height: padding.horizontal > 32 ? 32 : 20),
             FilledButton(
               style: ButtonStyle(
-                padding: WidgetStatePropertyAll(EdgeInsets.symmetric(
-                  horizontal: isNarrow ? 24 : 32,
-                  vertical: isNarrow ? 12 : 16,
-                )),
+                padding: WidgetStatePropertyAll(
+                  EdgeInsets.symmetric(
+                    horizontal: isNarrow ? 24 : 32,
+                    vertical: isNarrow ? 12 : 16,
+                  ),
+                ),
               ),
               onPressed: provider.showAnswer,
               child: const Text('显示答案 (Space)'),
@@ -111,7 +115,11 @@ class _StudyScreenState extends State<StudyScreen> {
     );
   }
 
-  Widget _buildAnswerView(StudyProvider provider, EdgeInsets padding, bool isNarrow) {
+  Widget _buildAnswerView(
+    StudyProvider provider,
+    EdgeInsets padding,
+    bool isNarrow,
+  ) {
     final card = provider.currentCard;
     if (card == null) return const EmptyDueWidget();
 
@@ -121,16 +129,9 @@ class _StudyScreenState extends State<StudyScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            CardFaceWidget(
-              title: '题目',
-              content: card.q,
-            ),
+            CardFaceWidget(title: '题目', content: card.q),
             SizedBox(height: padding.horizontal > 32 ? 24 : 16),
-            CardFaceWidget(
-              title: '答案',
-              content: card.a,
-              isAnswer: true,
-            ),
+            CardFaceWidget(title: '答案', content: card.a, isAnswer: true),
             SizedBox(height: padding.horizontal > 32 ? 32 : 20),
             GradeButtons(
               enabled: provider.canGrade,
@@ -144,7 +145,9 @@ class _StudyScreenState extends State<StudyScreen> {
                 child: Text(
                   '请稍候...',
                   style: FluentTheme.of(context).typography.caption?.copyWith(
-                    color: FluentTheme.of(context).resources.textFillColorSecondary,
+                    color: FluentTheme.of(
+                      context,
+                    ).resources.textFillColorSecondary,
                   ),
                 ),
               ),

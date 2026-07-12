@@ -45,46 +45,47 @@ class _BackupScreenState extends State<BackupScreen> {
       content: _isLoading
           ? const Center(child: ProgressRing())
           : _backups.isEmpty
-              ? const Center(child: Text('暂无备份'))
-              : ListView.builder(
-                  padding: const EdgeInsets.all(16),
-                  itemCount: _backups.length,
-                  itemBuilder: (context, index) {
-                    final backup = _backups[index];
-                    return Card(
-                      margin: const EdgeInsets.only(bottom: 8),
-                      child: ListTile(
-                        title: Text(backup.name),
-                        subtitle: backup.timestamp != null
-                            ? Text('${backup.timestamp}')
-                            : null,
-                        leading: Icon(
-                          backup.isAuto
-                              ? WindowsIcons.calendar_day
-                              : WindowsIcons.save_local,
-                          size: 20,
-                          color: backup.isAuto
-                              ? Colors.orange
-                              : Colors.blue,
+          ? const Center(child: Text('暂无备份'))
+          : ListView.builder(
+              padding: const EdgeInsets.all(16),
+              itemCount: _backups.length,
+              itemBuilder: (context, index) {
+                final backup = _backups[index];
+                return Card(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  child: ListTile(
+                    title: Text(backup.name),
+                    subtitle: backup.timestamp != null
+                        ? Text('${backup.timestamp}')
+                        : null,
+                    leading: Icon(
+                      backup.isAuto
+                          ? WindowsIcons.calendar_day
+                          : WindowsIcons.save_local,
+                      size: 20,
+                      color: backup.isAuto ? Colors.orange : Colors.blue,
+                    ),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Button(
+                          onPressed: () => _restoreBackup(backup),
+                          child: const Text('恢复'),
                         ),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Button(
-                              onPressed: () => _restoreBackup(backup),
-                              child: const Text('恢复'),
-                            ),
-                            const SizedBox(width: 8),
-                            IconButton(
-                              icon: const WindowsIcon(WindowsIcons.delete, size: 16),
-                              onPressed: () => _deleteBackup(backup),
-                            ),
-                          ],
+                        const SizedBox(width: 8),
+                        IconButton(
+                          icon: const WindowsIcon(
+                            WindowsIcons.delete,
+                            size: 16,
+                          ),
+                          onPressed: () => _deleteBackup(backup),
                         ),
-                      ),
-                    );
-                  },
-                ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
     );
   }
 
@@ -93,17 +94,21 @@ class _BackupScreenState extends State<BackupScreen> {
     await BackupService.createBackup();
     await _loadBackups();
     if (mounted) {
-      displayInfoBar(context, builder: (context, close) {
-        return InfoBar(
-          title: const Text('备份已创建'),
-          severity: InfoBarSeverity.success,
-          onClose: close,
-        );
-      });
+      displayInfoBar(
+        context,
+        builder: (context, close) {
+          return InfoBar(
+            title: const Text('备份已创建'),
+            severity: InfoBarSeverity.success,
+            onClose: close,
+          );
+        },
+      );
     }
   }
 
   Future<void> _restoreBackup(BackupInfo backup) async {
+    final cardProvider = context.read<CardProvider>();
     final confirmed = await showConfirmDialog(
       context: context,
       title: '恢复备份',
@@ -114,18 +119,21 @@ class _BackupScreenState extends State<BackupScreen> {
 
     setState(() => _isLoading = true);
     await BackupService.restoreBackup(backup.path);
-    await context.read<CardProvider>().loadCards();
+    await cardProvider.loadCards();
     await _loadBackups();
     setState(() => _isLoading = false);
 
     if (mounted) {
-      displayInfoBar(context, builder: (context, close) {
-        return InfoBar(
-          title: const Text('备份已恢复'),
-          severity: InfoBarSeverity.success,
-          onClose: close,
-        );
-      });
+      displayInfoBar(
+        context,
+        builder: (context, close) {
+          return InfoBar(
+            title: const Text('备份已恢复'),
+            severity: InfoBarSeverity.success,
+            onClose: close,
+          );
+        },
+      );
     }
   }
 

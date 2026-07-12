@@ -3,6 +3,7 @@ import 'package:drift/native.dart';
 import 'package:papyrus/data/local/app_database.dart';
 import 'package:papyrus/data/models/card_model.dart';
 import 'package:papyrus/data/repositories/card_repository_impl.dart';
+import 'package:papyrus/mcp/mcp_tool_handler.dart';
 
 void main() {
   late AppDatabase db;
@@ -21,6 +22,7 @@ void main() {
     test('loadAll returns empty list when no cards', () async {
       final cards = await repo.loadAll();
       expect(cards, isEmpty);
+      expect(await repo.countCards(), 0);
     });
 
     test('add and loadAll returns added card', () async {
@@ -32,6 +34,7 @@ void main() {
       expect(cards.first.id, '1');
       expect(cards.first.q, 'Q1');
       expect(cards.first.a, 'A1');
+      expect(await repo.countCards(), 1);
     });
 
     test('update modifies existing card', () async {
@@ -59,8 +62,12 @@ void main() {
 
     test('search filters by question and answer', () async {
       await repo.add(CardModel(id: '1', q: 'Flutter basics', a: 'UI toolkit'));
-      await repo.add(CardModel(id: '2', q: 'Dart language', a: 'Programming language'));
-      await repo.add(CardModel(id: '3', q: 'React native', a: 'Mobile framework'));
+      await repo.add(
+        CardModel(id: '2', q: 'Dart language', a: 'Programming language'),
+      );
+      await repo.add(
+        CardModel(id: '3', q: 'React native', a: 'Mobile framework'),
+      );
 
       final results = await repo.search('flutter');
       expect(results.length, 1);
@@ -73,9 +80,15 @@ void main() {
 
     test('getDueCards returns only due cards sorted by nextReview', () async {
       final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-      await repo.add(CardModel(id: '1', q: 'Past', a: 'A', nextReview: now - 100));
-      await repo.add(CardModel(id: '2', q: 'Future', a: 'A', nextReview: now + 1000));
-      await repo.add(CardModel(id: '3', q: 'Past2', a: 'A', nextReview: now - 50));
+      await repo.add(
+        CardModel(id: '1', q: 'Past', a: 'A', nextReview: now - 100),
+      );
+      await repo.add(
+        CardModel(id: '2', q: 'Future', a: 'A', nextReview: now + 1000),
+      );
+      await repo.add(
+        CardModel(id: '3', q: 'Past2', a: 'A', nextReview: now - 50),
+      );
 
       final due = await repo.getDueCards();
       expect(due.length, 2);
@@ -85,7 +98,9 @@ void main() {
 
     test('getDueCards returns empty when no due cards', () async {
       final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-      await repo.add(CardModel(id: '1', q: 'Future', a: 'A', nextReview: now + 1000));
+      await repo.add(
+        CardModel(id: '1', q: 'Future', a: 'A', nextReview: now + 1000),
+      );
 
       final due = await repo.getDueCards();
       expect(due, isEmpty);
@@ -116,11 +131,45 @@ void main() {
     });
 
     test('tags are stored and retrieved correctly', () async {
-      final card = CardModel(id: '1', q: 'Q', a: 'A', tags: ['dart', 'flutter']);
+      final card = CardModel(
+        id: '1',
+        q: 'Q',
+        a: 'A',
+        tags: ['dart', 'flutter'],
+      );
       await repo.add(card);
 
       final cards = await repo.loadAll();
       expect(cards.first.tags, ['dart', 'flutter']);
+    });
+
+    test('MCP handler exposes cards, due counts, and reviews by id', () async {
+      final handler = MCPToolHandler(repo);
+      final created = await handler.execute('create_card', {
+        'question': 'Question',
+        'answer': 'Answer',
+        'tags': ['test'],
+      });
+      final id = (created['card'] as Map<String, dynamic>)['id'] as String;
+
+      final stats = await handler.execute('get_card_stats', {});
+      expect(stats, {'due_count': 1, 'total_cards': 1});
+
+      final due = await handler.execute('get_due_cards', {});
+      expect(due['due_count'], 1);
+      expect(due['total_cards'], 1);
+
+      final reviewed = await handler.execute('review_card', {
+        'id': id,
+        'grade': 3,
+      });
+      final reviewedCard = reviewed['card'] as Map<String, dynamic>;
+      expect(reviewedCard['id'], id);
+      expect(reviewedCard['next_review'], greaterThan(0));
+
+      final noLongerDue = await handler.execute('get_due_cards', {});
+      expect(noLongerDue['due_count'], 0);
+      expect(noLongerDue['total_cards'], 1);
     });
   });
 }
