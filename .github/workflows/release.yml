@@ -169,56 +169,6 @@ jobs:
       - name: Run tests
         run: flutter test --coverage
 
-  # Temporarily disabled: app entry still imports dart:io unconditionally
-  # (LogProvider, BackupService, etc.), so `flutter build web` fails.
-  # Re-enable after conditional imports / stubs land; set repo var ENABLE_WEB_BUILD=true.
-  web:
-    name: Build Web
-    if: ${{ vars.ENABLE_WEB_BUILD == 'true' }}
-    runs-on: ubuntu-latest
-    needs: [prepare, quality]
-    env:
-      ARTIFACT_VERSION: ${{ needs.prepare.outputs.artifact_version }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
-          pub-cache: true
-
-      - name: Enable Web
-        run: flutter config --enable-web
-
-      - name: Install dependencies
-        run: flutter pub get
-
-      - name: Build Web release
-        run: flutter build web --release
-
-      - name: Package Web release
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -d build/web
-          test -n "$(find build/web -type f -print -quit)"
-          mkdir -p artifacts
-          (cd build && zip -qr "../artifacts/Papyrus-web-${ARTIFACT_VERSION}.zip" web)
-          test -s "artifacts/Papyrus-web-${ARTIFACT_VERSION}.zip"
-
-      - name: Upload Web package
-        uses: actions/upload-artifact@v4
-        with:
-          name: package-web
-          path: artifacts/Papyrus-web-${{ needs.prepare.outputs.artifact_version }}.zip
-          if-no-files-found: error
-          retention-days: 7
-          compression-level: 0
-
   android:
     name: Build Android
     if: ${{ github.event_name != 'pull_request' }}
@@ -278,207 +228,11 @@ jobs:
           retention-days: 7
           compression-level: 0
 
-  windows:
-    name: Build Windows
-    if: ${{ github.event_name != 'pull_request' }}
-    runs-on: windows-latest
-    needs: [prepare, quality]
-    env:
-      BUILD_NAME: ${{ needs.prepare.outputs.build_name }}
-      BUILD_NUMBER: ${{ needs.prepare.outputs.build_number }}
-      ARTIFACT_VERSION: ${{ needs.prepare.outputs.artifact_version }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
-          pub-cache: true
-
-      - name: Enable Windows desktop
-        run: flutter config --enable-windows-desktop
-
-      - name: Install dependencies
-        run: flutter pub get
-
-      - name: Build Windows release
-        run: flutter build windows --release --build-name $env:BUILD_NAME --build-number $env:BUILD_NUMBER
-
-      - name: Package Windows release
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $releaseDir = Join-Path $PWD 'build/windows/x64/runner/Release'
-          if (-not (Test-Path $releaseDir)) { throw "Missing Windows release directory: $releaseDir" }
-          if (-not (Get-ChildItem $releaseDir -File -Recurse)) { throw 'Windows release directory is empty' }
-          $artifactDir = Join-Path $PWD 'artifacts'
-          New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
-          $zipPath = Join-Path $artifactDir "Papyrus-windows-x64-$env:ARTIFACT_VERSION.zip"
-          Compress-Archive -Path $releaseDir -DestinationPath $zipPath -Force
-          if ((Get-Item $zipPath).Length -le 0) { throw 'Windows package is empty' }
-
-      - name: Upload Windows package
-        uses: actions/upload-artifact@v4
-        with:
-          name: package-windows
-          path: artifacts/Papyrus-windows-x64-${{ needs.prepare.outputs.artifact_version }}.zip
-          if-no-files-found: error
-          retention-days: 7
-          compression-level: 0
-
-  linux:
-    name: Build Linux
-    if: ${{ github.event_name != 'pull_request' }}
-    runs-on: ubuntu-latest
-    needs: [prepare, quality]
-    env:
-      ARTIFACT_VERSION: ${{ needs.prepare.outputs.artifact_version }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install Linux build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev
-
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
-          pub-cache: true
-
-      - name: Enable Linux desktop
-        run: flutter config --enable-linux-desktop
-
-      - name: Install dependencies
-        run: flutter pub get
-
-      - name: Build Linux release
-        run: flutter build linux --release
-
-      - name: Package Linux release
-        shell: bash
-        run: |
-          set -euo pipefail
-          bundle_dir=build/linux/x64/release/bundle
-          test -d "$bundle_dir"
-          test -n "$(find "$bundle_dir" -type f -print -quit)"
-          mkdir -p artifacts
-          tar -czf "artifacts/Papyrus-linux-x64-${ARTIFACT_VERSION}.tar.gz" \
-            -C build/linux/x64/release bundle
-          test -s "artifacts/Papyrus-linux-x64-${ARTIFACT_VERSION}.tar.gz"
-
-      - name: Upload Linux package
-        uses: actions/upload-artifact@v4
-        with:
-          name: package-linux
-          path: artifacts/Papyrus-linux-x64-${{ needs.prepare.outputs.artifact_version }}.tar.gz
-          if-no-files-found: error
-          retention-days: 7
-          compression-level: 0
-
-  macos:
-    name: Build macOS
-    if: ${{ github.event_name != 'pull_request' }}
-    runs-on: macos-latest
-    needs: [prepare, quality]
-    env:
-      BUILD_NAME: ${{ needs.prepare.outputs.build_name }}
-      BUILD_NUMBER: ${{ needs.prepare.outputs.build_number }}
-      ARTIFACT_VERSION: ${{ needs.prepare.outputs.artifact_version }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
-          pub-cache: true
-
-      - name: Enable macOS desktop
-        run: flutter config --enable-macos-desktop
-
-      - name: Install dependencies
-        run: flutter pub get
-
-      - name: Build macOS release
-        run: flutter build macos --release --build-name "$BUILD_NAME" --build-number "$BUILD_NUMBER"
-
-      - name: Package macOS release
-        shell: bash
-        run: |
-          set -euo pipefail
-          app_path="$(find build/macos/Build/Products/Release -maxdepth 1 -type d -name '*.app' -print -quit)"
-          if [[ -z "$app_path" ]]; then
-            echo 'No macOS .app bundle was produced'
-            exit 1
-          fi
-          mkdir -p artifacts
-          ditto -c -k --sequesterRsrc --keepParent "$app_path" \
-            "artifacts/Papyrus-macos-${ARTIFACT_VERSION}.zip"
-          test -s "artifacts/Papyrus-macos-${ARTIFACT_VERSION}.zip"
-
-      - name: Upload macOS package
-        uses: actions/upload-artifact@v4
-        with:
-          name: package-macos
-          path: artifacts/Papyrus-macos-${{ needs.prepare.outputs.artifact_version }}.zip
-          if-no-files-found: error
-          retention-days: 7
-          compression-level: 0
-
-  ios:
-    name: Validate iOS build
-    if: ${{ github.event_name != 'pull_request' }}
-    runs-on: macos-latest
-    needs: [prepare, quality]
-    env:
-      BUILD_NAME: ${{ needs.prepare.outputs.build_name }}
-      BUILD_NUMBER: ${{ needs.prepare.outputs.build_number }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
-          pub-cache: true
-
-      - name: Install dependencies
-        run: flutter pub get
-
-      - name: Build iOS without code signing
-        run: flutter build ios --release --no-codesign --build-name "$BUILD_NAME" --build-number "$BUILD_NUMBER"
-
-      - name: Verify iOS app bundle
-        shell: bash
-        run: |
-          set -euo pipefail
-          app_path="$(find build/ios/iphoneos -maxdepth 1 -type d -name '*.app' -print -quit)"
-          if [[ -z "$app_path" ]]; then
-            echo 'No iOS .app bundle was produced'
-            exit 1
-          fi
-          echo "Validated unsigned iOS bundle: $app_path"
-
   publish:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
-    needs: [prepare, quality, web, android, windows, linux, macos, ios]
-    if: ${{ always() && needs.prepare.outputs.should_release == 'true' && needs.quality.result == 'success' && (needs.web.result == 'success' || needs.web.result == 'skipped') && needs.android.result == 'success' && needs.windows.result == 'success' && needs.linux.result == 'success' && needs.macos.result == 'success' && needs.ios.result == 'success' }}
+    needs: [prepare, quality, android]
+    if: ${{ always() && needs.prepare.outputs.should_release == 'true' && needs.quality.result == 'success' && needs.android.result == 'success' }}
     permissions:
       contents: write
     env:
@@ -486,7 +240,6 @@ jobs:
       TAG_NAME: ${{ needs.prepare.outputs.tag_name }}
       IS_DRAFT: ${{ needs.prepare.outputs.is_draft }}
       IS_PRERELEASE: ${{ needs.prepare.outputs.is_prerelease }}
-      WEB_BUILT: ${{ needs.web.result == 'success' }}
     steps:
       - name: Download platform packages
         uses: actions/download-artifact@v4
@@ -501,16 +254,9 @@ jobs:
           set -euo pipefail
 
           expected=(
-            "release-assets/Papyrus-windows-x64-${ARTIFACT_VERSION}.zip"
-            "release-assets/Papyrus-macos-${ARTIFACT_VERSION}.zip"
-            "release-assets/Papyrus-linux-x64-${ARTIFACT_VERSION}.tar.gz"
             "release-assets/Papyrus-android-${ARTIFACT_VERSION}.apk"
             "release-assets/Papyrus-android-${ARTIFACT_VERSION}.aab"
           )
-
-          if [[ "$WEB_BUILT" == "true" ]]; then
-            expected+=("release-assets/Papyrus-web-${ARTIFACT_VERSION}.zip")
-          fi
 
           for file in "${expected[@]}"; do
             if [[ ! -s "$file" ]]; then
@@ -519,23 +265,10 @@ jobs:
             fi
           done
 
-          unzip -t "release-assets/Papyrus-windows-x64-${ARTIFACT_VERSION}.zip" >/dev/null
-          unzip -t "release-assets/Papyrus-macos-${ARTIFACT_VERSION}.zip" >/dev/null
-          tar -tzf "release-assets/Papyrus-linux-x64-${ARTIFACT_VERSION}.tar.gz" >/dev/null
-          if [[ "$WEB_BUILT" == "true" ]]; then
-            unzip -t "release-assets/Papyrus-web-${ARTIFACT_VERSION}.zip" >/dev/null
-          fi
-
           checksum_files=(
-            "Papyrus-windows-x64-${ARTIFACT_VERSION}.zip"
-            "Papyrus-macos-${ARTIFACT_VERSION}.zip"
-            "Papyrus-linux-x64-${ARTIFACT_VERSION}.tar.gz"
             "Papyrus-android-${ARTIFACT_VERSION}.apk"
             "Papyrus-android-${ARTIFACT_VERSION}.aab"
           )
-          if [[ "$WEB_BUILT" == "true" ]]; then
-            checksum_files+=("Papyrus-web-${ARTIFACT_VERSION}.zip")
-          fi
           (
             cd release-assets
             sha256sum "${checksum_files[@]}"

@@ -1,4 +1,5 @@
 import 'package:fluent_ui/fluent_ui.dart';
+import 'package:flutter/foundation.dart';
 import 'package:provider/provider.dart';
 import '../providers/card_provider.dart';
 import '../screens/study_screen.dart';
@@ -63,25 +64,26 @@ class _AppNavigationState extends State<AppNavigation> {
 
   @override
   Widget build(BuildContext context) {
-    return NavigationView(
-      titleBar: const TitleBar(
-        title: Text('Papyrus'),
-      ),
-      transitionBuilder: (child, animation) {
-        return EntrancePageTransition(
-          animation: animation,
-          child: child,
-        );
-      },
-      pane: NavigationPane(
-        selected: _selectedIndex,
-        onChanged: (index) => setState(() => _selectedIndex = index),
-        displayMode: PaneDisplayMode.auto,
-        indicator: const StickyNavigationIndicator(),
-        items: _items,
-        footerItems: _footerItems,
-        autoSuggestBox: _buildSearchBox(),
-        autoSuggestBoxReplacement: const Icon(WindowsIcons.search),
+    final isMobile =
+        defaultTargetPlatform == TargetPlatform.android ||
+        defaultTargetPlatform == TargetPlatform.iOS;
+
+    return SafeArea(
+      child: NavigationView(
+        titleBar: isMobile ? null : const TitleBar(title: Text('Papyrus')),
+        transitionBuilder: (child, animation) {
+          return EntrancePageTransition(animation: animation, child: child);
+        },
+        pane: NavigationPane(
+          selected: _selectedIndex,
+          onChanged: (index) => setState(() => _selectedIndex = index),
+          displayMode: PaneDisplayMode.auto,
+          indicator: const StickyNavigationIndicator(),
+          items: _items,
+          footerItems: _footerItems,
+          autoSuggestBox: _buildSearchBox(),
+          autoSuggestBoxReplacement: const Icon(WindowsIcons.search),
+        ),
       ),
     );
   }
@@ -90,21 +92,25 @@ class _AppNavigationState extends State<AppNavigation> {
     return Consumer<CardProvider>(
       builder: (context, provider, _) {
         final cards = provider.cards;
-        final items = cards.map((card) => AutoSuggestBoxItem(
-          value: card.id,
-          label: card.q,
-          child: Text(
-            card.q,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-          onSelected: () {
-            _searchController.clear();
-            // 跳转到卡片管理页并搜索
-            setState(() => _selectedIndex = 2);
-            provider.search(card.q);
-          },
-        )).toList();
+        final items = cards
+            .map(
+              (card) => AutoSuggestBoxItem(
+                value: card.id,
+                label: card.q,
+                child: Text(
+                  card.q,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                onSelected: () {
+                  _searchController.clear();
+                  // 跳转到卡片管理页并搜索
+                  setState(() => _selectedIndex = 2);
+                  provider.search(card.q);
+                },
+              ),
+            )
+            .toList();
 
         return AutoSuggestBox<String>(
           controller: _searchController,
