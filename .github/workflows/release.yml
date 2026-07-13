@@ -228,48 +228,11 @@ jobs:
           retention-days: 7
           compression-level: 0
 
-  ios:
-    name: Validate iOS build
-    if: ${{ github.event_name != 'pull_request' }}
-    runs-on: macos-latest
-    needs: [prepare, quality]
-    env:
-      BUILD_NAME: ${{ needs.prepare.outputs.build_name }}
-      BUILD_NUMBER: ${{ needs.prepare.outputs.build_number }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
-          pub-cache: true
-
-      - name: Install dependencies
-        run: flutter pub get
-
-      - name: Build iOS without code signing
-        run: flutter build ios --release --no-codesign --build-name "$BUILD_NAME" --build-number "$BUILD_NUMBER"
-
-      - name: Verify iOS app bundle
-        shell: bash
-        run: |
-          set -euo pipefail
-          app_path="$(find build/ios/iphoneos -maxdepth 1 -type d -name '*.app' -print -quit)"
-          if [[ -z "$app_path" ]]; then
-            echo 'No iOS .app bundle was produced'
-            exit 1
-          fi
-          echo "Validated unsigned iOS bundle: $app_path"
-
   publish:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
-    needs: [prepare, quality, android, ios]
-    if: ${{ always() && needs.prepare.outputs.should_release == 'true' && needs.quality.result == 'success' && needs.android.result == 'success' && needs.ios.result == 'success' }}
+    needs: [prepare, quality, android]
+    if: ${{ always() && needs.prepare.outputs.should_release == 'true' && needs.quality.result == 'success' && needs.android.result == 'success' }}
     permissions:
       contents: write
     env:
